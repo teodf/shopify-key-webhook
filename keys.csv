@@ -1,3 +1,5 @@
-key,mail,order_id
-ABCD-EFGH-IJKL,,
-MNOP-QRST-UVWX,,
+key,used,mail,date
+ABCD-EFGH-IJKL,false,,
+MNOP-QRST-UVWX,false,,
+MNOP-QRST-UVWX,false,,
+ERTD-QRST-UVWX,false,,
