@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+import logging
 import csv
 import datetime
 import os
@@ -8,7 +9,7 @@ from sendgrid.helpers.mail import Mail
 # Config
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
 FROM_EMAIL = "help@footbar.com"  # adresse expéditrice
-
+logging.basicConfig(level=logging.INFO)
 # Init
 app = Flask(__name__)
 
@@ -80,6 +81,6 @@ def webhook():
 
     return jsonify({"message": "Clé envoyée", "key": key}), 200
 
-# 🎉 Lancement local
 if __name__ == "__main__":
-    app.run(port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
