@@ -53,7 +53,7 @@ def get_and_use_license_key(to_email):
         return None  # plus de clé dispo
 
     with open('keys.csv', 'w', newline='') as csvfile:
-        fieldnames = ['key', 'used', 'email', 'date']
+        fieldnames = ['key', 'used', 'mail', 'date']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(keys)
