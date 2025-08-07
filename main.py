@@ -63,24 +63,35 @@ def get_and_use_license_key(to_email):
 # 📩 Webhook Shopify Flow
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.json
-    customer_email = data.get("email")
+    try:
+        # 🔍 Force le parsing JSON même si Content-Type est incorrect
+        data = request.get_json(force=True)
 
-    if not customer_email:
-        return jsonify({"error": "Email manquant"}), 400
+        # 🔎 Debug optionnel (supprime en prod)
+        print("RAW request body:", request.data)
+        print("Parsed JSON:", data)
+        print("Headers:", dict(request.headers))
 
-    # 🔑 Récupère une clé non utilisée
-    key = get_and_use_license_key(customer_email)
-    if not key:
-        return jsonify({"error": "Aucune clé disponible"}), 500
+        customer_email = data.get("email")
+        if not customer_email:
+            return jsonify({"error": "Email manquant"}), 400
 
-    # ✉️ Envoie l'email
-    email_sent = send_email(customer_email, key)
-    if not email_sent:
-        return jsonify({"error": "Échec d’envoi d’email"}), 500
+        # 🔑 Récupère une clé non utilisée
+        key = get_and_use_license_key(customer_email)
+        if not key:
+            return jsonify({"error": "Aucune clé disponible"}), 500
 
-    return jsonify({"message": "Clé envoyée", "key": key}), 200
+        # ✉️ Envoie l'email
+        email_sent = send_email(customer_email, key)
+        if not email_sent:
+            return jsonify({"error": "Échec d’envoi d’email"}), 500
 
+        return jsonify({"message": "Clé envoyée", "key": key}), 200
+
+    except Exception as e:
+        print("Erreur webhook:", e)
+        return jsonify({"error": str(e)}), 500
+        
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
