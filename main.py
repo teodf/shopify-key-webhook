@@ -64,19 +64,16 @@ def get_and_use_license_key(to_email):
 def webhook():
     data = request.json
     customer_email = data.get("email")
-    line_items = data.get("line_items", [])
 
-    # Vérifie que le produit spécifique est dans la commande
-    TARGET_PRODUCT_ID = "10217393946967"  # Remplace par l’ID réel du produit
-    found = any(str(item.get("product_id")) == TARGET_PRODUCT_ID for item in line_items)
+    if not customer_email:
+        return jsonify({"error": "Email manquant"}), 400
 
-    if not found:
-        return jsonify({"message": "Produit non déclencheur"}), 200
-
+    # 🔑 Récupère une clé non utilisée
     key = get_and_use_license_key(customer_email)
     if not key:
         return jsonify({"error": "Aucune clé disponible"}), 500
 
+    # ✉️ Envoie l'email
     email_sent = send_email(customer_email, key)
     if not email_sent:
         return jsonify({"error": "Échec d’envoi d’email"}), 500
