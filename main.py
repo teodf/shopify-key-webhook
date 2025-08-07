@@ -64,13 +64,12 @@ def get_and_use_license_key(to_email):
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        # 🔍 Force le parsing JSON même si Content-Type est incorrect
-        data = request.get_json(force=True)
+        # 🔍 Force parsing du JSON brut, peu importe le Content-Type
+        raw_data = request.data.decode("utf-8")
+        data = json.loads(raw_data)
 
-        # 🔎 Debug optionnel (supprime en prod)
-        print("RAW request body:", request.data)
+        print("RAW body:", raw_data)
         print("Parsed JSON:", data)
-        print("Headers:", dict(request.headers))
 
         customer_email = data.get("email")
         if not customer_email:
@@ -88,10 +87,14 @@ def webhook():
 
         return jsonify({"message": "Clé envoyée", "key": key}), 200
 
+    except json.JSONDecodeError as e:
+        print("Erreur JSON:", e)
+        return jsonify({"error": "Format JSON invalide"}), 400
+
     except Exception as e:
         print("Erreur webhook:", e)
         return jsonify({"error": str(e)}), 500
-        
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
