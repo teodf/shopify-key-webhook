@@ -45,7 +45,7 @@ def get_and_use_license_key(to_email):
             if row['used'].lower() == 'false' and not selected_key:
                 selected_key = row['key']
                 row['used'] = 'true'
-                row['email'] = to_email
+                row['mail'] = to_email
                 row['date'] = datetime.datetime.now().isoformat()
             keys.append(row)
 
