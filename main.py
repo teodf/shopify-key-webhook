@@ -4,6 +4,7 @@ import csv
 import datetime
 import os
 import sendgrid
+import json
 from sendgrid.helpers.mail import Mail
 
 # Config
