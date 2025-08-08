@@ -9,31 +9,31 @@ from sendgrid.helpers.mail import Mail
 
 # Config
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
+SENDGRID_TEMPLATE_ID = "d-da4295a9f558493a8b6988af60e501de"
 FROM_EMAIL = "help@footbar.com"  # adresse expéditrice
 logging.basicConfig(level=logging.INFO)
 # Init
 app = Flask(__name__)
 
 # 📩 Fonction d'envoi d'email
-def send_email(to_email, license_key):
-    message = Mail(
-        from_email=FROM_EMAIL,
-        to_emails=to_email,
-        subject="Votre clé d'activation",
-        html_content=f"""
-        <p>Bonjour,</p>
-        <p>Merci pour votre commande ! Voici votre clé d'activation :</p>
-        <h2>{license_key}</h2>
-        <p>À bientôt !</p>
-        """
-    )
+def send_email_with_template(to_email, licence_key):
     try:
-        sg = sendgrid.SendGridAPIClient(SENDGRID_API_KEY)
-        sg.send(message)
+        message = Mail(
+            from_email=("help@footbar.com", "Footbar"),
+            to_emails=to_email
+        )
+        message.dynamic_template_data = {
+            "licence_key": licence_key
+        }
+        message.template_id = SENDGRID_TEMPLATE_ID
+
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        response = sg.send(message)
+        print(response.status_code)
+        return True
     except Exception as e:
-        print("Erreur d'envoi d'email :", e)
+        print(f"Erreur SendGrid : {e}")
         return False
-    return True
 
 # 🔑 Fonction de récupération de clé
 def get_and_use_license_key(to_email):
@@ -82,7 +82,7 @@ def webhook():
             return jsonify({"error": "Aucune clé disponible"}), 500
 
         # ✉️ Envoie l'email
-        email_sent = send_email(customer_email, key)
+        email_sent = send_email_with_template(customer_email, key)
         if not email_sent:
             return jsonify({"error": "Échec d’envoi d’email"}), 500
 
