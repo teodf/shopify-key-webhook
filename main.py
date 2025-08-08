@@ -5,7 +5,7 @@ import datetime
 import os
 import json
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+from sendgrid.helpers.mail import Mail, TrackingSettings, ClickTracking
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 
@@ -60,6 +60,10 @@ def send_email_with_template(to_email, licence_key):
             "licence_key": licence_key
         }
         message.template_id = SENDGRID_TEMPLATE_ID
+
+        tracking_settings = TrackingSettings()
+        tracking_settings.click_tracking = ClickTracking(enable=False, enable_text=False)
+        message.tracking_settings = tracking_settings
 
         sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(message)
