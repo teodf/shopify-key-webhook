@@ -5,7 +5,7 @@ import datetime
 import os
 import json
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, TrackingSettings, ClickTracking
+from sendgrid.helpers.mail import Mail
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 
@@ -15,7 +15,8 @@ SERVICE_ACCOUNT_FILE = 'credentials.json'
 
 # Config
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
-SENDGRID_TEMPLATE_ID = "d-da4295a9f558493a8b6988af60e501de"  # ID du modèle d'email SendGrid
+TEMPLATE_ID_FR = "d-da4295a9f558493a8b6988af60e501de"  # Français
+TEMPLATE_ID_EN = "d-0314abc9f83a4ab3bc9c3068b9b0e2a1"  # Anglais
 FROM_EMAIL = "help@footbar.com"  # adresse expéditrice
 
 # Logs Render (flush direct)
@@ -49,9 +50,16 @@ def write_keys(spreadsheet_id, range_name, values):
     return result
 
 # 📩 Fonction d'envoi d'email
-def send_email_with_template(to_email, licence_key):
+def send_email_with_template(to_email, licence_key, language_code):
     try:
-        log(f"📤 Envoi email à {to_email} avec clé {licence_key}")
+        log(f"📤 Envoi email à {to_email} avec clé {licence_key} en langue {language_code}")
+
+        # Choix du template en fonction de la langue
+        if language_code and language_code.lower().startswith("fr"):
+            template_id = TEMPLATE_ID_FR
+        else:
+            template_id = TEMPLATE_ID_EN
+
         message = Mail(
             from_email=(FROM_EMAIL, "Footbar"),
             to_emails=to_email
@@ -59,11 +67,7 @@ def send_email_with_template(to_email, licence_key):
         message.dynamic_template_data = {
             "licence_key": licence_key
         }
-        message.template_id = SENDGRID_TEMPLATE_ID
-
-        tracking_settings = TrackingSettings()
-        tracking_settings.click_tracking = ClickTracking(enable=False, enable_text=False)
-        message.tracking_settings = tracking_settings
+        message.template_id = template_id
 
         sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(message)
@@ -126,11 +130,15 @@ def webhook():
         if not customer_email:
             return jsonify({"error": "Email manquant"}), 400
 
+        language_email = data.get("language")
+        if not language_email:
+            return jsonify({"error": "Langue manquante"}), 400
+
         key = get_and_use_license_key_gsheet(customer_email, SPREADSHEET_ID, RANGE_NAME)
         if not key:
             return jsonify({"error": "Aucune clé disponible"}), 500
 
-        email_sent = send_email_with_template(customer_email, key)
+        email_sent = send_email_with_template(customer_email, key, language_email)
         if not email_sent:
             return jsonify({"error": "Échec d’envoi d’email"}), 500
 
