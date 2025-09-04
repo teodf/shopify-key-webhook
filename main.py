@@ -65,26 +65,60 @@ PRODUCT_CONFIG = {
 }
 
 def get_sheets_service():
-    # Auth uniquement via OAuth client secrets (credentials.json), avec cache token.pickle
-    if not os.path.exists('credentials.json'):
-        raise RuntimeError("credentials.json introuvable. Placez votre fichier client OAuth.")
+    # Détecte automatiquement le type de credentials et s'adapte:
+    # - Production/Render: privilégie un compte de service (env GOOGLE_CREDENTIALS ou credentials.json type service_account)
+    # - Local: OAuth installed app (credentials.json type installed) avec cache token.pickle
 
+    # Charge les credentials depuis env ou fichier
+    creds_json_str = os.environ.get('GOOGLE_CREDENTIALS')
+    creds_file_path = os.environ.get('CREDENTIALS_FILE')
+    creds_info = None
+    if creds_json_str:
+        try:
+            creds_info = json.loads(creds_json_str)
+        except Exception:
+            raise RuntimeError("GOOGLE_CREDENTIALS n'est pas un JSON valide.")
+    elif creds_file_path and os.path.exists(creds_file_path):
+        with open(creds_file_path, 'r') as f:
+            creds_info = json.load(f)
+    else:
+        if not os.path.exists('credentials.json'):
+            raise RuntimeError("Aucun credentials trouvé. Définissez GOOGLE_CREDENTIALS, CREDENTIALS_FILE ou ajoutez credentials.json.")
+        with open('credentials.json', 'r') as f:
+            creds_info = json.load(f)
+
+    # Chemin compte de service
+    if isinstance(creds_info, dict) and creds_info.get('type') == 'service_account':
+        from google.oauth2 import service_account
+        creds = service_account.Credentials.from_service_account_info(creds_info, scopes=SCOPES)
+        return build('sheets', 'v4', credentials=creds)
+
+    # Chemin OAuth client (installed/web) - pour local uniquement
+    is_render = os.environ.get('RENDER', '') == 'true' or os.environ.get('RENDER_SERVICE_ID')
+    is_production = os.environ.get('ENV') == 'production' or os.environ.get('PYTHON_ENV') == 'production'
+    if is_render or is_production:
+        raise RuntimeError("Le credentials fourni n'est pas un compte de service. Utilisez un JSON type 'service_account' en production (Render).")
+
+    # Local dev: OAuth installed/web
     creds = None
     if os.path.exists('token.pickle'):
         with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
-
+            try:
+                creds = pickle.load(token)
+            except Exception:
+                creds = None
     if not creds or not getattr(creds, 'valid', False):
         if creds and getattr(creds, 'expired', False) and getattr(creds, 'refresh_token', None):
             creds.refresh(Request())
+            with open('token.pickle', 'wb') as token_out:
+                pickle.dump(creds, token_out)
         else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            # Supporte formats 'installed' ou 'web'
+            flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
             creds = flow.run_local_server(port=0)
-        with open('token.pickle', 'wb') as token_out:
-            pickle.dump(creds, token_out)
-
-    service = build('sheets', 'v4', credentials=creds)
-    return service
+            with open('token.pickle', 'wb') as token_out:
+                pickle.dump(creds, token_out)
+    return build('sheets', 'v4', credentials=creds)
 
 def read_keys(spreadsheet_id, range_name):
     service = get_sheets_service()
