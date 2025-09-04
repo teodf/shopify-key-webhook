@@ -4,10 +4,13 @@ import csv
 import datetime
 import os
 import json
+import os.path
+import pickle
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from googleapiclient.discovery import build
-from google.oauth2 import service_account
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 
 # Permissions demandées : lecture + écriture sur Google Sheets
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
@@ -27,9 +30,59 @@ def log(msg):
 
 app = Flask(__name__)
 
+# Configuration par produit (routing via SKU)
+PRODUCT_CONFIG = {
+    "FOOTBAR_GOLD_1_AN": {
+        "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
+        "range_name": "Feuille 1!A1:D",
+        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
+        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
+    },
+    "B2C001": {
+        "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
+        "range_name": "Bundle!A1:D",
+        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
+        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
+    },
+    "FOOTBAR_TEAM_1_MOIS": {
+        "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
+        "range_name": "Plateforme Coach 1 mois!A1:D",
+        "template_fr": "A DEFINIR",
+        "template_en": "A DEFINIR",
+    },
+    "FOOTBAR_TEAM_1_AN": {
+        "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
+        "range_name": "Plateforme Coach 1 an!A1:D",
+        "template_fr": "A DEFINIR",
+        "template_en": "A DEFINIR",
+    },
+    "FOOTBAR_TEAM_2_ANS": {
+        "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
+        "range_name": "Plateforme Coach 2 ans!A1:D",
+        "template_fr": "A DEFINIR",
+        "template_en": "A DEFINIR",
+    },
+}
+
 def get_sheets_service():
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    # Auth uniquement via OAuth client secrets (credentials.json), avec cache token.pickle
+    if not os.path.exists('credentials.json'):
+        raise RuntimeError("credentials.json introuvable. Placez votre fichier client OAuth.")
+
+    creds = None
+    if os.path.exists('token.pickle'):
+        with open('token.pickle', 'rb') as token:
+            creds = pickle.load(token)
+
+    if not creds or not getattr(creds, 'valid', False):
+        if creds and getattr(creds, 'expired', False) and getattr(creds, 'refresh_token', None):
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open('token.pickle', 'wb') as token_out:
+            pickle.dump(creds, token_out)
+
     service = build('sheets', 'v4', credentials=creds)
     return service
 
@@ -50,15 +103,15 @@ def write_keys(spreadsheet_id, range_name, values):
     return result
 
 # 📩 Fonction d'envoi d'email
-def send_email_with_template(to_email, licence_key, language_code):
+def send_email_with_template(to_email, licence_key, language_code, template_fr_override=None, template_en_override=None):
     try:
         log(f"📤 Envoi email à {to_email} avec clé {licence_key} en langue {language_code}")
 
         # Choix du template en fonction de la langue
         if language_code and language_code.lower().startswith("fr"):
-            template_id = TEMPLATE_ID_FR
+            template_id = template_fr_override if template_fr_override and template_fr_override != "A DEFINIR" else TEMPLATE_ID_FR
         else:
-            template_id = TEMPLATE_ID_EN
+            template_id = template_en_override if template_en_override and template_en_override != "A DEFINIR" else TEMPLATE_ID_EN
 
         message = Mail(
             from_email=(FROM_EMAIL, "Footbar"),
@@ -134,15 +187,47 @@ def webhook():
         if not language_email:
             return jsonify({"error": "Langue manquante"}), 400
 
-        key = get_and_use_license_key_gsheet(customer_email, SPREADSHEET_ID, RANGE_NAME)
+        line_items = data.get("line_items", [])
+        if not line_items:
+            return jsonify({"error": "Aucun produit trouvé"}), 400
+
+        # On sélectionne le premier item avec un SKU connu (configuré)
+        selected_config = None
+        selected_sku = None
+        for item in line_items:
+            title = item.get("title", "")
+            sku = item.get("sku", "")
+            qty = int(item.get("quantity", 0))
+            if not sku:
+                return jsonify({"error": "SKU manquant"}), 400
+            if not qty:
+                return jsonify({"error": "Quantité manquante"}), 400
+            if sku in PRODUCT_CONFIG and not selected_config:
+                selected_config = PRODUCT_CONFIG[sku]
+                selected_sku = sku
+
+        if not selected_config:
+            return jsonify({"error": "SKU inconnu ou non configuré", "known_skus": list(PRODUCT_CONFIG.keys())}), 400
+
+        key = get_and_use_license_key_gsheet(
+            customer_email,
+            selected_config["spreadsheet_id"],
+            selected_config["range_name"],
+        )
         if not key:
             return jsonify({"error": "Aucune clé disponible"}), 500
 
-        email_sent = send_email_with_template(customer_email, key, language_email)
+        email_sent = send_email_with_template(
+            customer_email,
+            key,
+            language_email,
+            template_fr_override=selected_config.get("template_fr"),
+            template_en_override=selected_config.get("template_en"),
+        )
         if not email_sent:
             return jsonify({"error": "Échec d’envoi d’email"}), 500
 
-        return jsonify({"message": "Clé envoyée", "key": key}), 200
+        return jsonify({"message": "Clé envoyée", "key": key, "sku": selected_sku}), 200
 
     except json.JSONDecodeError as e:
         log(f"❌ Erreur JSON: {e}")
