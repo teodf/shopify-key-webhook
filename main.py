@@ -38,7 +38,7 @@ PRODUCT_CONFIG = {
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
-    "B2C001": {
+    "B2C001_BUNDLE": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Bundle!A1:D",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
