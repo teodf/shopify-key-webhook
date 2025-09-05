@@ -6,6 +6,7 @@ import os
 import json
 import os.path
 import pickle
+import re
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from googleapiclient.discovery import build
@@ -47,22 +48,54 @@ PRODUCT_CONFIG = {
     "FOOTBAR_TEAM_1_MOIS": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Plateforme Coach 1 mois!A1:D",
-        "template_fr": "A DEFINIR",
+        "template_fr": "d-b3293a2f976b4821aa8bd9ad756cf372",
         "template_en": "A DEFINIR",
     },
     "FOOTBAR_TEAM_1_AN": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Plateforme Coach 1 an!A1:D",
-        "template_fr": "A DEFINIR",
+        "template_fr": "d-b3293a2f976b4821aa8bd9ad756cf372",
         "template_en": "A DEFINIR",
     },
     "FOOTBAR_TEAM_2_ANS": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Plateforme Coach 2 ans!A1:D",
-        "template_fr": "A DEFINIR",
+        "template_fr": "d-b3293a2f976b4821aa8bd9ad756cf372",
         "template_en": "A DEFINIR",
     },
 }
+
+# Config par motifs (regex). Permet de grouper plusieurs SKU sous une même config
+PRODUCT_REGEX_CONFIG = [
+    (re.compile(r"^B2B(015|020|030)_1_MOIS$"), {
+    "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
+    "range_name": "Plateforme Coach 1 mois!A1:D",
+    "template_fr": "d-8727718ed5ea4273abd1ed1324d2e4f6",
+    "template_en": "A DEFINIR",
+    }),
+    (re.compile(r"^B2B(015|020|030)_1_AN$"), {
+    "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
+    "range_name": "Plateforme Coach 1 an!A1:D",
+    "template_fr": "d-8727718ed5ea4273abd1ed1324d2e4f6",
+    "template_en": "A DEFINIR",
+    }),
+    (re.compile(r"^B2B(015|020|030)_2_ANS$"), {
+    "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
+    "range_name": "Plateforme Coach 2 ans!A1:D",
+    "template_fr": "d-8727718ed5ea4273abd1ed1324d2e4f6",
+    "template_en": "A DEFINIR",
+    })
+]
+
+def find_product_config_for_sku(sku):
+    # 1) Correspondance exacte
+    if sku in PRODUCT_CONFIG:
+        return PRODUCT_CONFIG[sku]
+    # 2) Correspondance par regex
+    for pattern, cfg in PRODUCT_REGEX_CONFIG:
+        if pattern.match(sku):
+            return cfg
+    return None
 
 def get_sheets_service():
     # Détecte automatiquement le type de credentials et s'adapte:
@@ -225,43 +258,57 @@ def webhook():
         if not line_items:
             return jsonify({"error": "Aucun produit trouvé"}), 400
 
-        # On sélectionne le premier item avec un SKU connu (configuré)
-        selected_config = None
-        selected_sku = None
+        # Traitement de chaque item avec gestion des quantités multiples
+        results = []
+        total_keys_sent = 0
+        
         for item in line_items:
             title = item.get("title", "")
             sku = item.get("sku", "")
             qty = int(item.get("quantity", 0))
+            
             if not sku:
                 return jsonify({"error": "SKU manquant"}), 400
             if not qty:
                 return jsonify({"error": "Quantité manquante"}), 400
-            if sku in PRODUCT_CONFIG and not selected_config:
-                selected_config = PRODUCT_CONFIG[sku]
-                selected_sku = sku
+                
+            # Trouve la config pour ce SKU
+            config = find_product_config_for_sku(sku)
+            if not config:
+                return jsonify({"error": f"SKU inconnu ou non configuré: {sku}", "known_skus": list(PRODUCT_CONFIG.keys())}), 400
+            
+            # Envoie un email par quantité
+            for i in range(qty):
+                key = get_and_use_license_key_gsheet(
+                    customer_email,
+                    config["spreadsheet_id"],
+                    config["range_name"],
+                )
+                if not key:
+                    return jsonify({"error": f"Aucune clé disponible pour {sku}"}), 500
 
-        if not selected_config:
-            return jsonify({"error": "SKU inconnu ou non configuré", "known_skus": list(PRODUCT_CONFIG.keys())}), 400
+                email_sent = send_email_with_template(
+                    customer_email,
+                    key,
+                    language_email,
+                    template_fr_override=config.get("template_fr"),
+                    template_en_override=config.get("template_en"),
+                )
+                if not email_sent:
+                    return jsonify({"error": f"Échec d'envoi d'email pour {sku}"}), 500
+                
+                results.append({
+                    "sku": sku,
+                    "key": key,
+                    "quantity_sent": 1
+                })
+                total_keys_sent += 1
 
-        key = get_and_use_license_key_gsheet(
-            customer_email,
-            selected_config["spreadsheet_id"],
-            selected_config["range_name"],
-        )
-        if not key:
-            return jsonify({"error": "Aucune clé disponible"}), 500
-
-        email_sent = send_email_with_template(
-            customer_email,
-            key,
-            language_email,
-            template_fr_override=selected_config.get("template_fr"),
-            template_en_override=selected_config.get("template_en"),
-        )
-        if not email_sent:
-            return jsonify({"error": "Échec d’envoi d’email"}), 500
-
-        return jsonify({"message": "Clé envoyée", "key": key, "sku": selected_sku}), 200
+        return jsonify({
+            "message": f"{total_keys_sent} clé(s) envoyée(s)",
+            "total_keys": total_keys_sent,
+            "details": results
+        }), 200
 
     except json.JSONDecodeError as e:
         log(f"❌ Erreur JSON: {e}")
