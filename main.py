@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
 import logging
-import csv
 import datetime
 import os
 import json
@@ -261,6 +260,7 @@ def webhook():
         # Traitement de chaque item avec gestion des quantités multiples
         results = []
         total_keys_sent = 0
+        skipped_skus = []
         
         for item in line_items:
             title = item.get("title", "")
@@ -268,14 +268,18 @@ def webhook():
             qty = int(item.get("quantity", 0))
             
             if not sku:
-                return jsonify({"error": "SKU manquant"}), 400
+                log(f"⚠️ SKU manquant pour item: {title}")
+                continue
             if not qty:
-                return jsonify({"error": "Quantité manquante"}), 400
+                log(f"⚠️ Quantité manquante pour SKU: {sku}")
+                continue
                 
             # Trouve la config pour ce SKU
             config = find_product_config_for_sku(sku)
             if not config:
-                return jsonify({"error": f"SKU inconnu ou non configuré: {sku}", "known_skus": list(PRODUCT_CONFIG.keys())}), 400
+                log(f"⚠️ SKU inconnu ignoré: {sku} (produit: {title})")
+                skipped_skus.append(sku)
+                continue
             
             # Envoie un email par quantité
             for i in range(qty):
@@ -304,11 +308,25 @@ def webhook():
                 })
                 total_keys_sent += 1
 
-        return jsonify({
+        # Vérifie qu'au moins un produit configuré a été traité
+        if total_keys_sent == 0:
+            return jsonify({
+                "error": "Aucun produit configuré trouvé dans la commande",
+                "skipped_skus": skipped_skus,
+                "known_skus": list(PRODUCT_CONFIG.keys())
+            }), 400
+
+        response = {
             "message": f"{total_keys_sent} clé(s) envoyée(s)",
             "total_keys": total_keys_sent,
             "details": results
-        }), 200
+        }
+        
+        if skipped_skus:
+            response["skipped_skus"] = skipped_skus
+            response["message"] += f" ({len(skipped_skus)} SKU(s) ignoré(s))"
+            
+        return jsonify(response), 200
 
     except json.JSONDecodeError as e:
         log(f"❌ Erreur JSON: {e}")
