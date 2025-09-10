@@ -48,19 +48,19 @@ PRODUCT_CONFIG = {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Plateforme Coach 1 mois!A1:D",
         "template_fr": "d-b3293a2f976b4821aa8bd9ad756cf372",
-        "template_en": "A DEFINIR",
+        "template_en": "d-dcae1d5d0d9e419cbf485f65a483146c",
     },
     "FOOTBAR_TEAM_1_AN": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Plateforme Coach 1 an!A1:D",
         "template_fr": "d-b3293a2f976b4821aa8bd9ad756cf372",
-        "template_en": "A DEFINIR",
+        "template_en": "d-dcae1d5d0d9e419cbf485f65a483146c",
     },
     "FOOTBAR_TEAM_2_ANS": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Plateforme Coach 2 ans!A1:D",
         "template_fr": "d-b3293a2f976b4821aa8bd9ad756cf372",
-        "template_en": "A DEFINIR",
+        "template_en": "d-dcae1d5d0d9e419cbf485f65a483146c",
     },
 }
 
@@ -70,19 +70,19 @@ PRODUCT_REGEX_CONFIG = [
     "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
     "range_name": "Plateforme Coach 1 mois!A1:D",
     "template_fr": "d-8727718ed5ea4273abd1ed1324d2e4f6",
-    "template_en": "A DEFINIR",
+    "template_en": "d-97d04b88657d42859465132374a0fa2e",
     }),
     (re.compile(r"^B2B(015|020|030)_1_AN$"), {
     "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
     "range_name": "Plateforme Coach 1 an!A1:D",
     "template_fr": "d-8727718ed5ea4273abd1ed1324d2e4f6",
-    "template_en": "A DEFINIR",
+    "template_en": "d-97d04b88657d42859465132374a0fa2e",
     }),
     (re.compile(r"^B2B(015|020|030)_2_ANS$"), {
     "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
     "range_name": "Plateforme Coach 2 ans!A1:D",
     "template_fr": "d-8727718ed5ea4273abd1ed1324d2e4f6",
-    "template_en": "A DEFINIR",
+    "template_en": "d-97d04b88657d42859465132374a0fa2e",
     })
 ]
 
