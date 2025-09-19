@@ -382,6 +382,7 @@ def invest_intent():
     first_name = (data.get("first_name") or "").strip()
     last_name  = (data.get("last_name") or "").strip()
     email      = (data.get("email") or "").strip()
+    country    = (data.get("country") or "").strip()
     amount     = data.get("amount_eur")
     consent    = bool(data.get("consent"))
 
@@ -391,6 +392,8 @@ def invest_intent():
     import re
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         return jsonify({"error":"Email invalide"}), 400
+    if not country:
+        return jsonify({"error":"Pays requis"}), 400
     if not consent:
         return jsonify({"error":"Consentement requis"}), 400
     try:
@@ -415,6 +418,7 @@ def invest_intent():
             first_name,
             last_name,
             email,
+            country,
             amount_val if amount_val is not None else "",
             "TRUE" if consent else "FALSE",
             utm_source, utm_medium, utm_campaign,
