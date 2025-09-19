@@ -336,6 +336,97 @@ def webhook():
         log(f"❌ Erreur webhook: {e}")
         return jsonify({"error": str(e)}), 500
 
+INVEST_SPREADSHEET_ID = "10FhSKicoGo2327o2Vx4B2NBv-zzyh4UFF4B2gSu2slY"  # ex: '1x9vyp_TLr7NJ...'
+INVEST_RANGE = "InvestIntents!A1"      
+
+def append_row(spreadsheet_id, range_a1, row_values):
+    service = get_sheets_service()
+    body = {"values": [row_values]}
+    return service.spreadsheets().values().append(
+        spreadsheetId=spreadsheet_id,
+        range=range_a1,
+        valueInputOption="RAW",
+        insertDataOption="INSERT_ROWS",
+        body=body
+    ).execute()
+
+# --- CORS simple (autoriser footbar.com) ---
+from flask import make_response
+
+ALLOWED_ORIGIN = "https://footbar.com"  # ou ton domaine précis de boutique
+
+@app.after_request
+def add_cors_headers(resp):
+    origin = request.headers.get("Origin", "")
+    if origin and origin.startswith(ALLOWED_ORIGIN):
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    return resp
+
+@app.route("/invest-intent", methods=["POST", "OPTIONS"])
+def invest_intent():
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return jsonify({"error":"JSON invalide"}), 400
+
+    # Honeypot anti-bot
+    if data.get("hp"):
+        return jsonify({"message":"ok"}), 200
+
+    first_name = (data.get("first_name") or "").strip()
+    last_name  = (data.get("last_name") or "").strip()
+    email      = (data.get("email") or "").strip()
+    amount     = data.get("amount_eur")
+    consent    = bool(data.get("consent"))
+
+    # Validations minimales
+    if not first_name or not last_name:
+        return jsonify({"error":"Prénom et nom requis"}), 400
+    import re
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return jsonify({"error":"Email invalide"}), 400
+    if not consent:
+        return jsonify({"error":"Consentement requis"}), 400
+    try:
+        amount_val = int(amount) if amount is not None else None
+        if amount_val is not None and amount_val < 1:
+            return jsonify({"error":"Montant invalide"}), 400
+    except Exception:
+        return jsonify({"error":"Montant invalide"}), 400
+
+    # UTM/referrer (si tu veux les ajouter plus tard côté front)
+    utm_source   = (data.get("utm_source") or "")
+    utm_medium   = (data.get("utm_medium") or "")
+    utm_campaign = (data.get("utm_campaign") or "")
+    page_url     = (data.get("page_url") or "")
+    referrer     = (data.get("referrer") or "")
+
+    # Append dans Google Sheets
+    try:
+        ts = datetime.datetime.utcnow().isoformat()
+        row = [
+            ts,
+            first_name,
+            last_name,
+            email,
+            amount_val if amount_val is not None else "",
+            "TRUE" if consent else "FALSE",
+            utm_source, utm_medium, utm_campaign,
+            page_url, referrer,
+        ]
+        append_row(INVEST_SPREADSHEET_ID, INVEST_RANGE, row)
+    except Exception as e:
+        log(f"❌ Erreur append GSheet: {e}")
+        return jsonify({"error":"Erreur d'enregistrement"}), 500
+
+    return jsonify({"message":"Intent enregistrée"}), 200
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
