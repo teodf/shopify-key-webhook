@@ -222,7 +222,7 @@ def get_and_use_license_key_gsheet(to_email, spreadsheet_id, range_name):
             selected_key = row[key_index]
             row[used_index] = 'true'
             row[mail_index] = to_email
-            row[date_index] = datetime.datetime.now().isoformat()
+            row[date_index] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             break
 
     if not selected_key:
@@ -383,7 +383,7 @@ def invest_intent():
     last_name  = (data.get("last_name") or "").strip()
     email      = (data.get("email") or "").strip()
     country    = (data.get("country") or "").strip()
-    amount     = data.get("amount_eur")
+    amount_range = (data.get("amount_range") or "").strip()
     consent    = bool(data.get("consent"))
 
     # Validations minimales
@@ -396,12 +396,8 @@ def invest_intent():
         return jsonify({"error":"Pays requis"}), 400
     if not consent:
         return jsonify({"error":"Consentement requis"}), 400
-    try:
-        amount_val = int(amount) if amount is not None else None
-        if amount_val is not None and amount_val < 1:
-            return jsonify({"error":"Montant invalide"}), 400
-    except Exception:
-        return jsonify({"error":"Montant invalide"}), 400
+    if not amount_range:
+        return jsonify({"error":"Tranche d'investissement requise"}), 400
 
     # UTM/referrer (si tu veux les ajouter plus tard côté front)
     utm_source   = (data.get("utm_source") or "")
@@ -412,14 +408,14 @@ def invest_intent():
 
     # Append dans Google Sheets
     try:
-        ts = datetime.datetime.utcnow().isoformat()
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
         row = [
             ts,
             first_name,
             last_name,
             email,
             country,
-            amount_val if amount_val is not None else "",
+            amount_range,
             "TRUE" if consent else "FALSE",
             utm_source, utm_medium, utm_campaign,
             page_url, referrer,
