@@ -6,6 +6,7 @@ import json
 import os.path
 import pickle
 import re
+import requests
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from googleapiclient.discovery import build
@@ -21,6 +22,13 @@ SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
 TEMPLATE_ID_FR = "d-da4295a9f558493a8b6988af60e501de"  # Français
 TEMPLATE_ID_EN = "d-0314abc9f83a4ab3bc9c3068b9b0e2a1"  # Anglais
 FROM_EMAIL = "help@footbar.com"  # adresse expéditrice
+
+# Mirakl Décathlon
+MIRAKL_API_BASE_URL = os.environ.get("MIRAKL_API_BASE_URL", "https://marketplace-decathlon-eu.mirakl.net")
+MIRAKL_API_KEY = os.environ.get("MIRAKL_API_KEY")
+MIRAKL_STATE_FILE = os.environ.get("MIRAKL_STATE_FILE", "mirakl_state.json")
+MIRAKL_NOTIFICATION_EMAIL = os.environ.get("MIRAKL_NOTIFICATION_EMAIL", "teo@footbar.com")
+MIRAKL_CRON_TOKEN = os.environ.get("MIRAKL_CRON_TOKEN")
 
 # Logs Render (flush direct)
 logging.basicConfig(level=logging.INFO, force=True)
@@ -204,6 +212,167 @@ def send_email_with_template(to_email, licence_key, language_code, template_fr_o
         log(f"❌ Erreur SendGrid : {e}")
         return False
 
+def send_simple_email(to_email, subject, plain_content):
+    try:
+        if not SENDGRID_API_KEY:
+            raise RuntimeError("SENDGRID_API_KEY manquant pour l'envoi d'email")
+
+        message = Mail(
+            from_email=(FROM_EMAIL, "Footbar"),
+            to_emails=to_email,
+            subject=subject,
+            plain_text_content=plain_content,
+        )
+
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        response = sg.send(message)
+        log(f"📨 Notification Mirakl envoyée ({response.status_code}) vers {to_email}")
+        return response.status_code == 202
+    except Exception as e:
+        log(f"❌ Erreur envoi email simple : {e}")
+        return False
+
+def parse_iso8601(value):
+    if not value:
+        return None
+    try:
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        return datetime.datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+def load_mirakl_state():
+    if not MIRAKL_STATE_FILE:
+        return {}
+    if os.path.exists(MIRAKL_STATE_FILE):
+        try:
+            with open(MIRAKL_STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            log(f"⚠️ Impossible de lire {MIRAKL_STATE_FILE}: {e}")
+    return {}
+
+def save_mirakl_state(state):
+    if not MIRAKL_STATE_FILE:
+        return
+    try:
+        with open(MIRAKL_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log(f"⚠️ Impossible d'écrire {MIRAKL_STATE_FILE}: {e}")
+
+def fetch_mirakl_orders():
+    if not MIRAKL_API_KEY:
+        raise RuntimeError("MIRAKL_API_KEY non défini")
+
+    url = f"{MIRAKL_API_BASE_URL.rstrip('/')}/api/orders"
+    headers = {
+        "Authorization": MIRAKL_API_KEY,
+        "Accept": "application/json",
+    }
+
+    response = requests.get(url, headers=headers, timeout=20)
+    response.raise_for_status()
+    payload = response.json()
+    orders = payload.get("orders", [])
+    log(f"📦 Mirakl: {len(orders)} commande(s) récupérée(s)")
+    return orders
+
+def build_mirakl_order_summary(order):
+    order_id = order.get("order_id")
+    created = order.get("created_date")
+    channel = order.get("channel", {})
+    customer = order.get("customer", {})
+    shipping = customer.get("shipping_address", {})
+    line_summaries = []
+    for line in order.get("order_lines", []):
+        sku = line.get("offer_sku") or line.get("product_shop_sku")
+        qty = line.get("quantity")
+        title = line.get("product_title")
+        line_summaries.append(f"- {sku} x{qty} · {title}")
+
+    shipping_name = f"{shipping.get('firstname', '')} {shipping.get('lastname', '')}".strip()
+    shipping_address = " | ".join(filter(None, [
+        shipping_name,
+        shipping.get("street_1"),
+        shipping.get("street_2"),
+        f"{shipping.get('zip_code', '')} {shipping.get('city', '')}".strip(),
+        shipping.get("country_iso_code"),
+        shipping.get("phone"),
+    ]))
+
+    return "\n".join([
+        f"Commande : {order_id}",
+        f"Créée le : {created}",
+        f"Canal : {channel.get('label', channel.get('code', 'inconnu'))}",
+        "Lignes :",
+        *line_summaries,
+        "",
+        "Adresse livraison :",
+        shipping_address or "(non communiquée)",
+    ])
+
+def poll_mirakl_and_notify():
+    try:
+        orders = fetch_mirakl_orders()
+    except Exception as exc:
+        log(f"❌ Erreur Mirakl: {exc}")
+        return {"error": str(exc)}, 500
+
+    state = load_mirakl_state()
+    last_seen_raw = state.get("last_seen_updated_at")
+    last_seen_dt = parse_iso8601(last_seen_raw)
+    processed_list = list(state.get("processed_order_ids", []))
+    processed_ids = set(processed_list)
+
+    new_orders = []
+    max_seen_dt = last_seen_dt
+
+    for order in orders:
+        order_id = order.get("order_id")
+        order_updated = parse_iso8601(order.get("last_updated_date"))
+        is_new = order_id not in processed_ids
+        should_process = False
+        if is_new:
+            should_process = True
+        elif order_updated and (not last_seen_dt or order_updated > last_seen_dt):
+            should_process = True
+        if not should_process:
+            continue
+        new_orders.append(order)
+        if order_updated and (not max_seen_dt or order_updated > max_seen_dt):
+            max_seen_dt = order_updated
+
+    if not new_orders:
+        log("ℹ️ Mirakl: aucune nouvelle commande")
+        return {"message": "Aucune nouvelle commande Mirakl"}, 200
+
+    notifications = []
+    for order in new_orders:
+        summary = build_mirakl_order_summary(order)
+        subject = f"[Mirakl] Nouvelle commande {order.get('order_id')}"
+        sent = send_simple_email(MIRAKL_NOTIFICATION_EMAIL, subject, summary)
+        notifications.append({
+            "order_id": order.get("order_id"),
+            "email_sent": sent,
+        })
+        order_id = order.get("order_id")
+        if order_id and order_id not in processed_ids:
+            processed_ids.add(order_id)
+            processed_list.append(order_id)
+
+    state["processed_order_ids"] = processed_list[-200:]
+    if max_seen_dt:
+        state["last_seen_updated_at"] = max_seen_dt.isoformat()
+    save_mirakl_state(state)
+
+    log(f"✅ Mirakl: {len(new_orders)} commande(s) traitée(s)")
+    return {
+        "message": f"{len(new_orders)} commande(s) Mirakl notifiée(s)",
+        "notifications": notifications,
+    }, 200
+
 # 🔑 Fonction de récupération de clé
 def get_and_use_license_key_gsheet(to_email, spreadsheet_id, range_name):
     values = read_keys(spreadsheet_id, range_name)
@@ -342,6 +511,14 @@ def webhook():
         log(f"❌ Erreur webhook: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route("/mirakl/poll", methods=["POST"])
+def mirakl_poll():
+    if not check_cron_token(request):
+        return jsonify({"error": "Unauthorized"}), 403
+
+    payload, status_code = poll_mirakl_and_notify()
+    return jsonify(payload), status_code
+
 INVEST_SPREADSHEET_ID = "10FhSKicoGo2327o2Vx4B2NBv-zzyh4UFF4B2gSu2slY"  # ex: '1x9vyp_TLr7NJ...'
 INVEST_RANGE = "InvestIntents!A1"      
 
@@ -432,6 +609,15 @@ def invest_intent():
         return jsonify({"error":"Erreur d'enregistrement"}), 500
 
     return jsonify({"message":"Intent enregistrée"}), 200
+
+def check_cron_token(req):
+    if not MIRAKL_CRON_TOKEN:
+        return True
+    provided = req.headers.get("X-Cron-Token") or req.args.get("token")
+    if provided != MIRAKL_CRON_TOKEN:
+        log("⚠️ Token cron Mirakl invalide")
+        return False
+    return True
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
