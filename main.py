@@ -27,8 +27,6 @@ FROM_EMAIL = "help@footbar.com"  # adresse expéditrice
 MIRAKL_API_BASE_URL = os.environ.get("MIRAKL_API_BASE_URL", "https://marketplace-decathlon-eu.mirakl.net")
 MIRAKL_API_KEY = os.environ.get("MIRAKL_API_KEY")
 MIRAKL_STATE_FILE = os.environ.get("MIRAKL_STATE_FILE", "mirakl_state.json")
-MIRAKL_NOTIFICATION_EMAIL = os.environ.get("MIRAKL_NOTIFICATION_EMAIL", "teo@footbar.com")
-MIRAKL_CRON_TOKEN = os.environ.get("MIRAKL_CRON_TOKEN")
 
 # Logs Render (flush direct)
 logging.basicConfig(level=logging.INFO, force=True)
@@ -212,26 +210,6 @@ def send_email_with_template(to_email, licence_key, language_code, template_fr_o
         log(f"❌ Erreur SendGrid : {e}")
         return False
 
-def send_simple_email(to_email, subject, plain_content):
-    try:
-        if not SENDGRID_API_KEY:
-            raise RuntimeError("SENDGRID_API_KEY manquant pour l'envoi d'email")
-
-        message = Mail(
-            from_email=(FROM_EMAIL, "Footbar"),
-            to_emails=to_email,
-            subject=subject,
-            plain_text_content=plain_content,
-        )
-
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
-        response = sg.send(message)
-        log(f"📨 Notification Mirakl envoyée ({response.status_code}) vers {to_email}")
-        return response.status_code == 202
-    except Exception as e:
-        log(f"❌ Erreur envoi email simple : {e}")
-        return False
-
 def parse_iso8601(value):
     if not value:
         return None
@@ -313,6 +291,86 @@ def build_mirakl_order_summary(order):
         shipping_address or "(non communiquée)",
     ])
 
+def process_order(customer_email, language_email, line_items):
+    if not customer_email:
+        return {"error": "Email manquant"}, 400
+
+    language_email = language_email or "fr"
+
+    if not line_items:
+        return {"error": "Aucun produit trouvé"}, 400
+
+    results = []
+    total_keys_sent = 0
+    skipped_skus = []
+
+    for item in line_items:
+        title = item.get("title", "")
+        sku = item.get("sku", "")
+        qty_raw = item.get("quantity", 0)
+        try:
+            qty = int(qty_raw)
+        except Exception:
+            qty = 0
+
+        if not sku:
+            log(f"⚠️ SKU manquant pour item: {title}")
+            continue
+        if qty <= 0:
+            log(f"⚠️ Quantité manquante pour SKU: {sku}")
+            continue
+
+        config = find_product_config_for_sku(sku)
+        if not config:
+            log(f"⚠️ SKU inconnu ignoré: {sku} (produit: {title})")
+            skipped_skus.append(sku)
+            continue
+
+        for _ in range(qty):
+            key = get_and_use_license_key_gsheet(
+                customer_email,
+                config["spreadsheet_id"],
+                config["range_name"],
+            )
+            if not key:
+                return {"error": f"Aucune clé disponible pour {sku}"}, 500
+
+            email_sent = send_email_with_template(
+                customer_email,
+                key,
+                language_email,
+                template_fr_override=config.get("template_fr"),
+                template_en_override=config.get("template_en"),
+            )
+            if not email_sent:
+                return {"error": f"Échec d'envoi d'email pour {sku}"}, 500
+
+            results.append({
+                "sku": sku,
+                "key": key,
+                "quantity_sent": 1
+            })
+            total_keys_sent += 1
+
+    if total_keys_sent == 0:
+        return {
+            "error": "Aucun produit configuré trouvé dans la commande",
+            "skipped_skus": skipped_skus,
+            "known_skus": list(PRODUCT_CONFIG.keys())
+        }, 400
+
+    response = {
+        "message": f"{total_keys_sent} clé(s) envoyée(s)",
+        "total_keys": total_keys_sent,
+        "details": results
+    }
+
+    if skipped_skus:
+        response["skipped_skus"] = skipped_skus
+        response["message"] += f" ({len(skipped_skus)} SKU(s) ignoré(s))"
+
+    return response, 200
+
 def poll_mirakl_and_notify():
     try:
         orders = fetch_mirakl_orders()
@@ -350,26 +408,41 @@ def poll_mirakl_and_notify():
 
     notifications = []
     for order in new_orders:
-        summary = build_mirakl_order_summary(order)
-        subject = f"[Mirakl] Nouvelle commande {order.get('order_id')}"
-        sent = send_simple_email(MIRAKL_NOTIFICATION_EMAIL, subject, summary)
-        notifications.append({
-            "order_id": order.get("order_id"),
-            "email_sent": sent,
-        })
         order_id = order.get("order_id")
-        if order_id and order_id not in processed_ids:
-            processed_ids.add(order_id)
-            processed_list.append(order_id)
+        customer_email = order.get("customer_notification_email")
+        customer = order.get("customer", {})
+        locale = customer.get("locale") or order.get("channel", {}).get("code") or "fr"
+        line_items = []
+        for line in order.get("order_lines", []):
+            line_items.append({
+                "title": line.get("product_title"),
+                "sku": line.get("offer_sku") or line.get("product_shop_sku"),
+                "quantity": line.get("quantity", 0),
+            })
+
+        payload, status = process_order(customer_email, locale, line_items)
+        success = status == 200
+        notifications.append({
+            "order_id": order_id,
+            "status": status,
+            "result": payload,
+        })
+
+        if success:
+            if order_id and order_id not in processed_ids:
+                processed_ids.add(order_id)
+                processed_list.append(order_id)
+        else:
+            log(f"⚠️ Mirakl commande {order_id} non traitée ({status}): {payload}")
 
     state["processed_order_ids"] = processed_list[-200:]
     if max_seen_dt:
         state["last_seen_updated_at"] = max_seen_dt.isoformat()
     save_mirakl_state(state)
 
-    log(f"✅ Mirakl: {len(new_orders)} commande(s) traitée(s)")
+    log(f"✅ Mirakl: {len([n for n in notifications if n['status'] == 200])} commande(s) traitée(s)")
     return {
-        "message": f"{len(new_orders)} commande(s) Mirakl notifiée(s)",
+        "message": f"{len([n for n in notifications if n['status'] == 200])} commande(s) Mirakl notifiée(s)",
         "notifications": notifications,
     }, 200
 
@@ -421,87 +494,11 @@ def webhook():
         data = json.loads(raw_data)
 
         customer_email = data.get("email")
-        if not customer_email:
-            return jsonify({"error": "Email manquant"}), 400
-
         language_email = data.get("language")
-        if not language_email:
-            return jsonify({"error": "Langue manquante"}), 400
-
         line_items = data.get("line_items", [])
-        if not line_items:
-            return jsonify({"error": "Aucun produit trouvé"}), 400
 
-        # Traitement de chaque item avec gestion des quantités multiples
-        results = []
-        total_keys_sent = 0
-        skipped_skus = []
-        
-        for item in line_items:
-            title = item.get("title", "")
-            sku = item.get("sku", "")
-            qty = int(item.get("quantity", 0))
-            
-            if not sku:
-                log(f"⚠️ SKU manquant pour item: {title}")
-                continue
-            if not qty:
-                log(f"⚠️ Quantité manquante pour SKU: {sku}")
-                continue
-                
-            # Trouve la config pour ce SKU
-            config = find_product_config_for_sku(sku)
-            if not config:
-                log(f"⚠️ SKU inconnu ignoré: {sku} (produit: {title})")
-                skipped_skus.append(sku)
-                continue
-            
-            # Envoie un email par quantité
-            for i in range(qty):
-                key = get_and_use_license_key_gsheet(
-                    customer_email,
-                    config["spreadsheet_id"],
-                    config["range_name"],
-                )
-                if not key:
-                    return jsonify({"error": f"Aucune clé disponible pour {sku}"}), 500
-
-                email_sent = send_email_with_template(
-                    customer_email,
-                    key,
-                    language_email,
-                    template_fr_override=config.get("template_fr"),
-                    template_en_override=config.get("template_en"),
-                )
-                if not email_sent:
-                    return jsonify({"error": f"Échec d'envoi d'email pour {sku}"}), 500
-                
-                results.append({
-                    "sku": sku,
-                    "key": key,
-                    "quantity_sent": 1
-                })
-                total_keys_sent += 1
-
-        # Vérifie qu'au moins un produit configuré a été traité
-        if total_keys_sent == 0:
-            return jsonify({
-                "error": "Aucun produit configuré trouvé dans la commande",
-                "skipped_skus": skipped_skus,
-                "known_skus": list(PRODUCT_CONFIG.keys())
-            }), 400
-
-        response = {
-            "message": f"{total_keys_sent} clé(s) envoyée(s)",
-            "total_keys": total_keys_sent,
-            "details": results
-        }
-        
-        if skipped_skus:
-            response["skipped_skus"] = skipped_skus
-            response["message"] += f" ({len(skipped_skus)} SKU(s) ignoré(s))"
-            
-        return jsonify(response), 200
+        payload, status = process_order(customer_email, language_email, line_items)
+        return jsonify(payload), status
 
     except json.JSONDecodeError as e:
         log(f"❌ Erreur JSON: {e}")
@@ -513,9 +510,6 @@ def webhook():
 
 @app.route("/mirakl/poll", methods=["POST"])
 def mirakl_poll():
-    if not check_cron_token(request):
-        return jsonify({"error": "Unauthorized"}), 403
-
     payload, status_code = poll_mirakl_and_notify()
     return jsonify(payload), status_code
 
@@ -609,15 +603,6 @@ def invest_intent():
         return jsonify({"error":"Erreur d'enregistrement"}), 500
 
     return jsonify({"message":"Intent enregistrée"}), 200
-
-def check_cron_token(req):
-    if not MIRAKL_CRON_TOKEN:
-        return True
-    provided = req.headers.get("X-Cron-Token") or req.args.get("token")
-    if provided != MIRAKL_CRON_TOKEN:
-        log("⚠️ Token cron Mirakl invalide")
-        return False
-    return True
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
