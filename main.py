@@ -389,15 +389,11 @@ def poll_mirakl_and_notify():
 
     for order in orders:
         order_id = order.get("order_id")
-        order_updated = parse_iso8601(order.get("last_updated_date"))
-        is_new = order_id not in processed_ids
-        should_process = False
-        if is_new:
-            should_process = True
-        elif order_updated and (not last_seen_dt or order_updated > last_seen_dt):
-            should_process = True
-        if not should_process:
+        if not order_id:
             continue
+        if order_id in processed_ids:
+            continue
+        order_updated = parse_iso8601(order.get("last_updated_date"))
         new_orders.append(order)
         if order_updated and (not max_seen_dt or order_updated > max_seen_dt):
             max_seen_dt = order_updated
