@@ -44,6 +44,12 @@ PRODUCT_CONFIG = {
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
+    "FOOTBAR_GOLD_1_AN_BUNDLE": {
+        "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
+        "range_name": "Feuille 1!A1:D",
+        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
+        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
+    },
     "B2C001_BUNDLE": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Bundle!A1:D",
@@ -300,18 +306,32 @@ def process_order(customer_email, language_email, line_items):
     if not line_items:
         return {"error": "Aucun produit trouvé"}, 400
 
+    bundle_skus = {"B2C001_BUNDLE"}
+    subscription_skus = {"FOOTBAR_GOLD_1_AN", "FOOTBAR_GOLD_1_AN_BUNDLE"}
+    order_sku_set = set()
+    for item in line_items:
+        sku_clean = (item.get("sku") or "").strip().upper()
+        if sku_clean:
+            order_sku_set.add(sku_clean)
+    skip_subscription_items = bool(bundle_skus & order_sku_set)
+
     results = []
     total_keys_sent = 0
     skipped_skus = []
 
     for item in line_items:
         title = item.get("title", "")
-        sku = item.get("sku", "")
+        raw_sku = item.get("sku", "")
+        sku = raw_sku.strip().upper()
         qty_raw = item.get("quantity", 0)
         try:
             qty = int(qty_raw)
         except Exception:
             qty = 0
+
+        if skip_subscription_items and sku in subscription_skus:
+            log(f"ℹ️ SKU {sku} ignoré car bundle présent dans la commande")
+            continue
 
         if not sku:
             log(f"⚠️ SKU manquant pour item: {title}")
