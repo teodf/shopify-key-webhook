@@ -609,17 +609,24 @@ def build_amazon_order_summary(order, items=None):
         shipping_address.get("CountryCode"),
     ]))
     
-    return "\n".join([
+    lines_to_join = [
         f"Commande : {order_id}",
         f"Créée le : {purchase_date}",
         f"Marketplace : {marketplace}",
         f"Email : {buyer_email}",
         "Lignes :",
-        *line_summaries if line_summaries else ["(items non récupérés)"],
+    ]
+    if line_summaries:
+        lines_to_join.extend(line_summaries)
+    else:
+        lines_to_join.append("(items non récupérés)")
+    lines_to_join.extend([
         "",
         "Adresse livraison :",
         shipping_address_str or "(non communiquée)",
     ])
+    
+    return "\n".join(lines_to_join)
 
 def poll_amazon_and_notify():
     """Poll Amazon et envoie les notifications pour les nouvelles commandes"""
