@@ -7,6 +7,7 @@ import os.path
 import pickle
 import re
 import requests
+import subprocess
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from googleapiclient.discovery import build
@@ -27,6 +28,21 @@ FROM_EMAIL = "help@footbar.com"  # adresse expéditrice
 MIRAKL_API_BASE_URL = os.environ.get("MIRAKL_API_BASE_URL", "https://marketplace-decathlon-eu.mirakl.net")
 MIRAKL_API_KEY = os.environ.get("MIRAKL_API_KEY")
 MIRAKL_STATE_FILE = os.environ.get("MIRAKL_STATE_FILE", "mirakl_state.json")
+
+# Amazon SP-API
+AMAZON_LWA_CLIENT_ID = os.environ.get("AMAZON_LWA_CLIENT_ID")
+AMAZON_LWA_CLIENT_SECRET = os.environ.get("AMAZON_LWA_CLIENT_SECRET")
+AMAZON_LWA_REFRESH_TOKEN = os.environ.get("AMAZON_LWA_REFRESH_TOKEN")
+AMAZON_SP_API_ACCESS_KEY = os.environ.get("AMAZON_SP_API_ACCESS_KEY")
+AMAZON_SP_API_SECRET_KEY = os.environ.get("AMAZON_SP_API_SECRET_KEY")
+AMAZON_SP_API_ENDPOINT = os.environ.get("AMAZON_SP_API_ENDPOINT", "https://sellingpartnerapi-eu.amazon.com")
+AMAZON_SP_API_REGION = os.environ.get("AMAZON_SP_API_REGION", "eu-west-1")
+AMAZON_STATE_FILE = os.environ.get("AMAZON_STATE_FILE", "amazon_state.json")
+# Marketplace IDs (peuvent être combinés avec des virgules)
+AMAZON_MARKETPLACE_IDS = os.environ.get(
+    "AMAZON_MARKETPLACE_IDS",
+    "A13V1IB3VIYZZH,A1PA6795UKMFR9,APJ6JRA9NG5V4,A1RKKUPIHCS9HS,A1805IZSGTT6HS,AMEN7PMS3EDWL"
+)
 
 # Logs Render (flush direct)
 logging.basicConfig(level=logging.INFO, force=True)
@@ -462,6 +478,269 @@ def poll_mirakl_and_notify():
         "notifications": notifications,
     }, 200
 
+# ========== Amazon SP-API ==========
+
+def get_amazon_access_token():
+    """Obtient un access token LWA à partir du refresh token"""
+    if not AMAZON_LWA_CLIENT_ID or not AMAZON_LWA_CLIENT_SECRET or not AMAZON_LWA_REFRESH_TOKEN:
+        raise RuntimeError("Credentials Amazon LWA manquants")
+    
+    url = "https://api.amazon.com/auth/o2/token"
+    data = {
+        "grant_type": "refresh_token",
+        "refresh_token": AMAZON_LWA_REFRESH_TOKEN,
+        "client_id": AMAZON_LWA_CLIENT_ID,
+        "client_secret": AMAZON_LWA_CLIENT_SECRET,
+    }
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    
+    response = requests.post(url, data=data, headers=headers, timeout=20)
+    response.raise_for_status()
+    result = response.json()
+    access_token = result.get("access_token")
+    if not access_token:
+        raise RuntimeError("Access token non reçu dans la réponse LWA")
+    return access_token
+
+def load_amazon_state():
+    """Charge l'état Amazon depuis le fichier"""
+    if not AMAZON_STATE_FILE:
+        return {}
+    if os.path.exists(AMAZON_STATE_FILE):
+        try:
+            with open(AMAZON_STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            log(f"⚠️ Impossible de lire {AMAZON_STATE_FILE}: {e}")
+    return {}
+
+def save_amazon_state(state):
+    """Sauvegarde l'état Amazon dans le fichier"""
+    if not AMAZON_STATE_FILE:
+        return
+    try:
+        with open(AMAZON_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log(f"⚠️ Impossible d'écrire {AMAZON_STATE_FILE}: {e}")
+
+def call_amazon_sp_api(endpoint_path, access_token, params=None):
+    """Appelle l'API Amazon SP-API via awscurl"""
+    if not AMAZON_SP_API_ACCESS_KEY or not AMAZON_SP_API_SECRET_KEY:
+        raise RuntimeError("Credentials AWS pour Amazon SP-API manquants")
+    
+    url = f"{AMAZON_SP_API_ENDPOINT.rstrip('/')}{endpoint_path}"
+    if params:
+        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+        url = f"{url}?{query_string}"
+    
+    cmd = [
+        "awscurl",
+        "--region", AMAZON_SP_API_REGION,
+        "--service", "execute-api",
+        "--access_key", AMAZON_SP_API_ACCESS_KEY,
+        "--secret_key", AMAZON_SP_API_SECRET_KEY,
+        "--request", "GET",
+        "--header", f"x-amz-access-token: {access_token}",
+        "--header", "Accept: application/json",
+        url,
+    ]
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+        return json.loads(result.stdout)
+    except subprocess.CalledProcessError as e:
+        log(f"❌ Erreur awscurl: {e.stderr}")
+        raise RuntimeError(f"Erreur lors de l'appel Amazon SP-API: {e.stderr}")
+    except json.JSONDecodeError as e:
+        log(f"❌ Erreur parsing JSON: {e}")
+        raise RuntimeError(f"Réponse Amazon SP-API invalide: {e}")
+
+def fetch_amazon_orders(access_token, created_after=None):
+    """Récupère les commandes Amazon"""
+    if created_after is None:
+        # Par défaut, on prend la date du jour à minuit UTC
+        created_after = datetime.datetime.now(datetime.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    if isinstance(created_after, datetime.datetime):
+        created_after_str = created_after.isoformat().replace("+00:00", "Z")
+    else:
+        created_after_str = created_after
+    
+    params = {
+        "MarketplaceIds": AMAZON_MARKETPLACE_IDS,
+        "CreatedAfter": created_after_str,
+        "OrderStatuses": "Unshipped,PartiallyShipped,Shipped",
+        "FulfillmentChannels": "MFN",
+    }
+    
+    response = call_amazon_sp_api("/orders/v0/orders", access_token, params)
+    orders = response.get("payload", {}).get("Orders", [])
+    log(f"📦 Amazon: {len(orders)} commande(s) récupérée(s)")
+    return orders
+
+def fetch_amazon_order_items(access_token, order_id):
+    """Récupère les items d'une commande Amazon"""
+    endpoint = f"/orders/v0/orders/{order_id}/orderItems"
+    response = call_amazon_sp_api(endpoint, access_token)
+    items = response.get("payload", {}).get("OrderItems", [])
+    return items
+
+def build_amazon_order_summary(order, items=None):
+    """Construit un résumé de commande Amazon"""
+    order_id = order.get("AmazonOrderId")
+    purchase_date = order.get("PurchaseDate")
+    marketplace = order.get("SalesChannel", "Amazon")
+    buyer_info = order.get("BuyerInfo", {})
+    buyer_email = buyer_info.get("BuyerEmail", "")
+    shipping_address = order.get("ShippingAddress", {})
+    
+    line_summaries = []
+    if items:
+        for item in items:
+            sku = item.get("SellerSKU") or item.get("ASIN", "")
+            qty = item.get("QuantityOrdered", 0)
+            title = item.get("Title", "")
+            line_summaries.append(f"- {sku} x{qty} · {title}")
+    
+    shipping_address_str = " | ".join(filter(None, [
+        shipping_address.get("PostalCode"),
+        shipping_address.get("City"),
+        shipping_address.get("CountryCode"),
+    ]))
+    
+    return "\n".join([
+        f"Commande : {order_id}",
+        f"Créée le : {purchase_date}",
+        f"Marketplace : {marketplace}",
+        f"Email : {buyer_email}",
+        "Lignes :",
+        *line_summaries if line_summaries else ["(items non récupérés)"],
+        "",
+        "Adresse livraison :",
+        shipping_address_str or "(non communiquée)",
+    ])
+
+def poll_amazon_and_notify():
+    """Poll Amazon et envoie les notifications pour les nouvelles commandes"""
+    try:
+        access_token = get_amazon_access_token()
+    except Exception as exc:
+        log(f"❌ Erreur obtention access token Amazon: {exc}")
+        return {"error": str(exc)}, 500
+    
+    state = load_amazon_state()
+    last_seen_raw = state.get("last_seen_purchase_date")
+    last_seen_dt = parse_iso8601(last_seen_raw)
+    
+    # Si on a une dernière date vue, on l'utilise, sinon on prend aujourd'hui
+    if last_seen_dt:
+        created_after = last_seen_dt
+    else:
+        # Première exécution : on prend les commandes des 7 derniers jours
+        created_after = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
+    
+    try:
+        orders = fetch_amazon_orders(access_token, created_after)
+    except Exception as exc:
+        log(f"❌ Erreur récupération commandes Amazon: {exc}")
+        return {"error": str(exc)}, 500
+    
+    processed_list = list(state.get("processed_order_ids", []))
+    processed_ids = set(processed_list)
+    
+    new_orders = []
+    max_seen_dt = last_seen_dt
+    
+    for order in orders:
+        order_id = order.get("AmazonOrderId")
+        if not order_id:
+            continue
+        if order_id in processed_ids:
+            continue
+        purchase_date = parse_iso8601(order.get("PurchaseDate"))
+        new_orders.append(order)
+        if purchase_date and (not max_seen_dt or purchase_date > max_seen_dt):
+            max_seen_dt = purchase_date
+    
+    if not new_orders:
+        log("ℹ️ Amazon: aucune nouvelle commande")
+        return {"message": "Aucune nouvelle commande Amazon"}, 200
+    
+    notifications = []
+    for order in new_orders:
+        order_id = order.get("AmazonOrderId")
+        buyer_info = order.get("BuyerInfo", {})
+        customer_email = buyer_info.get("BuyerEmail", "")
+        
+        # Détection de la langue basée sur le marketplace
+        marketplace_id = order.get("MarketplaceId", "")
+        sales_channel = order.get("SalesChannel", "")
+        language_email = "fr"  # par défaut
+        if "DE" in sales_channel or marketplace_id == "A1PA6795UKMFR9":
+            language_email = "de"
+        elif "IT" in sales_channel or marketplace_id == "APJ6JRA9NG5V4":
+            language_email = "it"
+        elif "ES" in sales_channel or marketplace_id == "A1RKKUPIHCS9HS":
+            language_email = "es"
+        elif "NL" in sales_channel or marketplace_id == "A1805IZSGTT6HS":
+            language_email = "nl"
+        elif "BE" in sales_channel or marketplace_id == "AMEN7PMS3EDWL":
+            language_email = "fr"  # Belgique = français par défaut
+        
+        # Récupérer les items de la commande
+        try:
+            items = fetch_amazon_order_items(access_token, order_id)
+        except Exception as e:
+            log(f"⚠️ Erreur récupération items pour commande {order_id}: {e}")
+            items = []
+        
+        line_items = []
+        for item in items:
+            sku = item.get("SellerSKU") or ""
+            qty = item.get("QuantityOrdered", 0)
+            title = item.get("Title", "")
+            line_items.append({
+                "title": title,
+                "sku": sku,
+                "quantity": qty,
+            })
+        
+        if not line_items:
+            log(f"⚠️ Amazon commande {order_id}: aucun item trouvé")
+            notifications.append({
+                "order_id": order_id,
+                "status": 400,
+                "result": {"error": "Aucun item trouvé dans la commande"},
+            })
+            continue
+        
+        payload, status = process_order(customer_email, language_email, line_items)
+        success = status == 200
+        notifications.append({
+            "order_id": order_id,
+            "status": status,
+            "result": payload,
+        })
+        
+        if success:
+            if order_id and order_id not in processed_ids:
+                processed_ids.add(order_id)
+                processed_list.append(order_id)
+        else:
+            log(f"⚠️ Amazon commande {order_id} non traitée ({status}): {payload}")
+    
+    state["processed_order_ids"] = processed_list[-200:]  # Garder les 200 dernières
+    if max_seen_dt:
+        state["last_seen_purchase_date"] = max_seen_dt.isoformat()
+    save_amazon_state(state)
+    
+    log(f"✅ Amazon: {len([n for n in notifications if n['status'] == 200])} commande(s) traitée(s)")
+    return {
+        "message": f"{len([n for n in notifications if n['status'] == 200])} commande(s) Amazon notifiée(s)",
+        "notifications": notifications,
+    }, 200
+
 # 🔑 Fonction de récupération de clé
 def get_and_use_license_key_gsheet(to_email, spreadsheet_id, range_name):
     values = read_keys(spreadsheet_id, range_name)
@@ -527,6 +806,11 @@ def webhook():
 @app.route("/mirakl/poll", methods=["POST"])
 def mirakl_poll():
     payload, status_code = poll_mirakl_and_notify()
+    return jsonify(payload), status_code
+
+@app.route("/amazon/poll", methods=["POST"])
+def amazon_poll():
+    payload, status_code = poll_amazon_and_notify()
     return jsonify(payload), status_code
 
 INVEST_SPREADSHEET_ID = "10FhSKicoGo2327o2Vx4B2NBv-zzyh4UFF4B2gSu2slY"  # ex: '1x9vyp_TLr7NJ...'
