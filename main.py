@@ -272,7 +272,7 @@ def fetch_mirakl_orders():
     if not MIRAKL_API_KEY:
         raise RuntimeError("MIRAKL_API_KEY non défini")
 
-    url = f"{MIRAKL_API_BASE_URL.rstrip('/')}/api/orders"
+    url = f"{MIRAKL_API_BASE_URL.rstrip('/')}/api/orders?max=100"
     headers = {
         "Authorization": MIRAKL_API_KEY,
         "Accept": "application/json",
