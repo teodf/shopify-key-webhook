@@ -251,7 +251,7 @@ def write_keys(spreadsheet_id, range_name, values):
     return result
 
 # 📩 Fonction d'envoi d'email
-def send_email_with_template(to_email, licence_key, language_code, template_fr_override=None, template_en_override=None):
+def send_email_with_template(to_email, licence_key, language_code, template_fr_override=None, template_en_override=None, order_id=None):
     try:
         log(f"📤 Envoi email à {to_email} avec clé {licence_key} en langue {language_code}")
 
@@ -268,6 +268,9 @@ def send_email_with_template(to_email, licence_key, language_code, template_fr_o
         message.dynamic_template_data = {
             "licence_key": licence_key
         }
+        # Ajouter le numéro de commande si fourni (pour Amazon)
+        if order_id:
+            message.dynamic_template_data["order_id"] = order_id
         message.template_id = template_id
 
         sg = SendGridAPIClient(SENDGRID_API_KEY)
@@ -361,7 +364,7 @@ def build_mirakl_order_summary(order):
         shipping_address or "(non communiquée)",
     ])
 
-def process_order(customer_email, language_email, line_items):
+def process_order(customer_email, language_email, line_items, order_id=None):
     if not customer_email:
         return {"error": "Email manquant"}, 400
 
@@ -425,6 +428,7 @@ def process_order(customer_email, language_email, line_items):
                 language_email,
                 template_fr_override=config.get("template_fr"),
                 template_en_override=config.get("template_en"),
+                order_id=order_id,
             )
             if not email_sent:
                 return {"error": f"Échec d'envoi d'email pour {sku}"}, 500
@@ -770,7 +774,7 @@ def poll_amazon_and_notify():
             })
             continue
         
-        payload, status = process_order(customer_email, language_email, line_items)
+        payload, status = process_order(customer_email, language_email, line_items, order_id=order_id)
         success = status == 200
         notifications.append({
             "order_id": order_id,
