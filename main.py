@@ -265,12 +265,14 @@ def send_email_with_template(to_email, licence_key, language_code, template_fr_o
             from_email=(FROM_EMAIL, "Footbar"),
             to_emails=to_email
         )
-        message.dynamic_template_data = {
+        # Construire les données du template
+        template_data = {
             "licence_key": licence_key
         }
         # Ajouter le numéro de commande si fourni (pour Amazon)
         if order_id:
-            message.dynamic_template_data["order_id"] = order_id
+            template_data["order_id"] = order_id
+        message.dynamic_template_data = template_data
         message.template_id = template_id
 
         sg = SendGridAPIClient(SENDGRID_API_KEY)
