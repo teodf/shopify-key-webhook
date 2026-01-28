@@ -250,6 +250,59 @@ def write_keys(spreadsheet_id, range_name, values):
         valueInputOption='RAW', body=body).execute()
     return result
 
+# 📩 Fonction d'envoi d'email simple pour Amazon
+def send_amazon_simple_email(to_email, licence_key, order_id, language_code="fr"):
+    """Envoie un email simple pour les commandes Amazon sans template"""
+    try:
+        log(f"📤 Envoi email Amazon simple à {to_email} avec clé {licence_key} pour commande {order_id} (langue: {language_code})")
+
+        # Déterminer si on utilise le français ou l'anglais
+        is_french = language_code and language_code.lower().startswith("fr")
+        
+        if is_french:
+            email_content = f"""Bonjour,
+
+Concernant votre commande Amazon {order_id},  
+voici le code requis pour accéder au service inclus avec votre produit Footbar :
+
+Code : {licence_key}
+
+Si vous rencontrez une difficulté technique pour l'utiliser, merci de répondre à ce message.
+
+Cordialement,  
+Footbar"""
+            subject = "Votre code d'accès Footbar pour la commande {order_id}"
+        else:
+            email_content = f"""Hello,
+
+Regarding your Amazon order {order_id},  
+here is the code required to access the service included with your Footbar product:
+
+Code: {licence_key}
+
+If you encounter any technical difficulties using it, please reply to this message.
+
+Best regards,  
+Footbar"""
+            subject = "Your Footbar access code for order {order_id}"
+
+        message = Mail(
+            from_email=(FROM_EMAIL, "Footbar"),
+            to_emails=to_email,
+            subject=subject,
+            plain_text_content=email_content
+        )
+
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        response = sg.send(message)
+        log(f"📨 Réponse SendGrid: {response.status_code}")
+        log(f"📨 Headers: {response.headers}")
+        return response.status_code == 202
+
+    except Exception as e:
+        log(f"❌ Erreur SendGrid : {e}")
+        return False
+
 # 📩 Fonction d'envoi d'email
 def send_email_with_template(to_email, licence_key, language_code, template_fr_override=None, template_en_override=None, order_id=None):
     try:
@@ -424,14 +477,22 @@ def process_order(customer_email, language_email, line_items, order_id=None):
             if not key:
                 return {"error": f"Aucune clé disponible pour {sku}"}, 500
 
-            email_sent = send_email_with_template(
-                customer_email,
-                key,
-                language_email,
-                template_fr_override=config.get("template_fr"),
-                template_en_override=config.get("template_en"),
-                order_id=order_id,
-            )
+            # Pour les commandes Amazon, utiliser l'email simple
+            if order_id:
+                email_sent = send_amazon_simple_email(
+                    customer_email,
+                    key,
+                    order_id,
+                    language_code=language_email,
+                )
+            else:
+                email_sent = send_email_with_template(
+                    customer_email,
+                    key,
+                    language_email,
+                    template_fr_override=config.get("template_fr"),
+                    template_en_override=config.get("template_en"),
+                )
             if not email_sent:
                 return {"error": f"Échec d'envoi d'email pour {sku}"}, 500
 
