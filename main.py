@@ -56,91 +56,91 @@ app = Flask(__name__)
 PRODUCT_CONFIG = {
     "FOOTBAR_GOLD_1_AN": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Feuille 1!A1:D",
+        "range_name": "Feuille 1!A1:E",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "FOOTBAR_GOLD_1_AN_BUNDLE": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Feuille 1!A1:D",
+        "range_name": "Feuille 1!A1:E",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Bundle!A1:D",
+        "range_name": "Bundle!A1:E",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Bundle à vie!A1:D",
+        "range_name": "Bundle à vie!A1:E",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_10": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Bundle à vie!A1:D",
+        "range_name": "Bundle à vie!A1:E",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_12": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Bundle à vie!A1:D",
+        "range_name": "Bundle à vie!A1:E",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_14": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Bundle à vie!A1:D",
+        "range_name": "Bundle à vie!A1:E",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_S": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Bundle à vie!A1:D",
+        "range_name": "Bundle à vie!A1:E",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_M": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Bundle à vie!A1:D",
+        "range_name": "Bundle à vie!A1:E",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_L": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Bundle à vie!A1:D",
+        "range_name": "Bundle à vie!A1:E",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_XL": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Bundle à vie!A1:D",
+        "range_name": "Bundle à vie!A1:E",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "S302294": { # produit ajouté suite mauvaise config Quentin
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Bundle à vie!A1:D",
+        "range_name": "Bundle à vie!A1:E",
         "template_fr": "d-da4295a9f558493a8b6988af60e501de",
         "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "FOOTBAR_TEAM_1_MOIS": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Plateforme Coach 1 mois!A1:D",
+        "range_name": "Plateforme Coach 1 mois!A1:E",
         "template_fr": "d-b3293a2f976b4821aa8bd9ad756cf372",
         "template_en": "d-dcae1d5d0d9e419cbf485f65a483146c",
     },
     "FOOTBAR_TEAM_1_AN": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Plateforme Coach 1 an!A1:D",
+        "range_name": "Plateforme Coach 1 an!A1:E",
         "template_fr": "d-b3293a2f976b4821aa8bd9ad756cf372",
         "template_en": "d-dcae1d5d0d9e419cbf485f65a483146c",
     },
     "FOOTBAR_TEAM_2_ANS": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-        "range_name": "Plateforme Coach 2 ans!A1:D",
+        "range_name": "Plateforme Coach 2 ans!A1:E",
         "template_fr": "d-b3293a2f976b4821aa8bd9ad756cf372",
         "template_en": "d-dcae1d5d0d9e419cbf485f65a483146c",
     },
@@ -150,19 +150,19 @@ PRODUCT_CONFIG = {
 PRODUCT_REGEX_CONFIG = [
     (re.compile(r"^B2B(015|020|030)_1_MOIS$"), {
     "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-    "range_name": "Plateforme Coach 1 mois!A1:D",
+    "range_name": "Plateforme Coach 1 mois!A1:E",
     "template_fr": "d-8727718ed5ea4273abd1ed1324d2e4f6",
     "template_en": "d-97d04b88657d42859465132374a0fa2e",
     }),
     (re.compile(r"^B2B(015|020|030)_1_AN$"), {
     "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-    "range_name": "Plateforme Coach 1 an!A1:D",
+    "range_name": "Plateforme Coach 1 an!A1:E",
     "template_fr": "d-8727718ed5ea4273abd1ed1324d2e4f6",
     "template_en": "d-97d04b88657d42859465132374a0fa2e",
     }),
     (re.compile(r"^B2B(015|020|030)_2_ANS$"), {
     "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
-    "range_name": "Plateforme Coach 2 ans!A1:D",
+    "range_name": "Plateforme Coach 2 ans!A1:E",
     "template_fr": "d-8727718ed5ea4273abd1ed1324d2e4f6",
     "template_en": "d-97d04b88657d42859465132374a0fa2e",
     })
@@ -490,6 +490,7 @@ def process_order(customer_email, language_email, line_items, order_id=None):
                 customer_email,
                 config["spreadsheet_id"],
                 config["range_name"],
+                order_id=order_id,
             )
             if not key:
                 return {"error": f"Aucune clé disponible pour {sku}"}, 500
@@ -584,7 +585,7 @@ def poll_mirakl_and_notify():
                 "quantity": line.get("quantity", 0),
             })
 
-        payload, status = process_order(customer_email, locale, line_items)
+        payload, status = process_order(customer_email, locale, line_items, order_id=order_id)
         success = status == 200
         notifications.append({
             "order_id": order_id,
@@ -881,7 +882,7 @@ def poll_amazon_and_notify():
     }, 200
 
 # 🔑 Fonction de récupération de clé
-def get_and_use_license_key_gsheet(to_email, spreadsheet_id, range_name):
+def get_and_use_license_key_gsheet(to_email, spreadsheet_id, range_name, order_id=None):
     values = read_keys(spreadsheet_id, range_name)
 
     # Première ligne = header, données à partir de l’indice 1
@@ -892,6 +893,7 @@ def get_and_use_license_key_gsheet(to_email, spreadsheet_id, range_name):
     used_index = header.index('used')
     mail_index = header.index('mail')
     date_index = header.index('date')
+    order_id_index = header.index('order_id') if 'order_id' in header else None
 
     selected_key = None
 
@@ -905,6 +907,8 @@ def get_and_use_license_key_gsheet(to_email, spreadsheet_id, range_name):
             row[used_index] = 'true'
             row[mail_index] = to_email
             row[date_index] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            if order_id_index is not None:
+                row[order_id_index] = order_id if order_id else ''
             break
 
     if not selected_key:
@@ -917,7 +921,7 @@ def get_and_use_license_key_gsheet(to_email, spreadsheet_id, range_name):
     return selected_key
 
 SPREADSHEET_ID = '1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0'
-RANGE_NAME = 'Feuille 1!A1:D'
+RANGE_NAME = 'Feuille 1!A1:E'
 
 # 📩 Webhook Shopify Flow
 @app.route("/webhook", methods=["POST"])
