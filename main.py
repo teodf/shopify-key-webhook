@@ -372,18 +372,35 @@ def fetch_mirakl_orders():
     if not MIRAKL_API_KEY:
         raise RuntimeError("MIRAKL_API_KEY non défini")
 
-    url = f"{MIRAKL_API_BASE_URL.rstrip('/')}/api/orders?max=100"
+    base_url = f"{MIRAKL_API_BASE_URL.rstrip('/')}/api/orders"
     headers = {
         "Authorization": MIRAKL_API_KEY,
         "Accept": "application/json",
     }
 
-    response = requests.get(url, headers=headers, timeout=20)
-    response.raise_for_status()
-    payload = response.json()
-    orders = payload.get("orders", [])
-    log(f"📦 Mirakl: {len(orders)} commande(s) récupérée(s)")
-    return orders
+    all_orders = []
+    max_per_page = 100
+    offset = 0
+
+    while True:
+        url = f"{base_url}?max={max_per_page}&offset={offset}"
+        response = requests.get(url, headers=headers, timeout=20)
+        response.raise_for_status()
+        payload = response.json()
+
+        orders = payload.get("orders", [])
+        total_count = payload.get("total_count", 0)
+
+        all_orders.extend(orders)
+        log(f"📦 Mirakl: {len(orders)} commande(s) récupérée(s) (offset={offset}, total={len(all_orders)}/{total_count})")
+
+        if len(orders) < max_per_page or len(all_orders) >= total_count:
+            break
+
+        offset += max_per_page
+
+    log(f"📦 Mirakl: {len(all_orders)} commande(s) récupérée(s) au total")
+    return all_orders
 
 def build_mirakl_order_summary(order):
     order_id = order.get("order_id")
