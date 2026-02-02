@@ -446,7 +446,7 @@ def process_order(customer_email, language_email, line_items, order_id=None):
         return {"error": "Aucun produit trouvé"}, 400
 
     bundle_skus = {"B2C001_BUNDLE"}
-    subscription_skus = {"FOOTBAR_GOLD_1_AN", "FOOTBAR_GOLD_1_AN_BUNDLE"}
+    subscription_skus = {"FOOTBAR_GOLD_1_AN_BUNDLE"}  # Seulement FOOTBAR_GOLD_1_AN_BUNDLE doit être ignoré en présence du bundle
     order_sku_set = set()
     for item in line_items:
         sku_clean = (item.get("sku") or "").strip().upper()
