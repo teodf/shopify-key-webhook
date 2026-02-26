@@ -7,6 +7,7 @@ import os.path
 import pickle
 import re
 import requests
+from urllib.parse import quote
 import subprocess
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
@@ -657,6 +658,18 @@ def save_amazon_state(state):
     except Exception as e:
         log(f"⚠️ Impossible d'écrire {AMAZON_STATE_FILE}: {e}")
 
+def _amazon_sp_api_query_string(params):
+    """Construit la query string pour SP-API (paramètres simples ou listes)."""
+    parts = []
+    for k, v in params.items():
+        if isinstance(v, (list, tuple)):
+            for item in v:
+                parts.append(f"{k}={quote(str(item), safe='')}")
+        else:
+            parts.append(f"{k}={quote(str(v), safe='')}")
+    return "&".join(parts)
+
+
 def call_amazon_sp_api(endpoint_path, access_token, params=None):
     """Appelle l'API Amazon SP-API via awscurl"""
     if not AMAZON_SP_API_ACCESS_KEY or not AMAZON_SP_API_SECRET_KEY:
@@ -664,8 +677,7 @@ def call_amazon_sp_api(endpoint_path, access_token, params=None):
     
     url = f"{AMAZON_SP_API_ENDPOINT.rstrip('/')}{endpoint_path}"
     if params:
-        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
-        url = f"{url}?{query_string}"
+        url = f"{url}?{_amazon_sp_api_query_string(params)}"
     
     cmd = [
         "awscurl",
@@ -689,53 +701,118 @@ def call_amazon_sp_api(endpoint_path, access_token, params=None):
         log(f"❌ Erreur parsing JSON: {e}")
         raise RuntimeError(f"Réponse Amazon SP-API invalide: {e}")
 
+# Orders API v2026-01-01 (searchOrders + getOrder avec buyerEmail et items)
+AMAZON_ORDERS_VERSION = "2026-01-01"
+
+
 def fetch_amazon_orders(access_token, created_after=None):
-    """Récupère les commandes Amazon"""
+    """Récupère les commandes Amazon via searchOrders (Orders API v2026-01-01)."""
     if created_after is None:
-        # Par défaut, on prend la date du jour à minuit UTC
         created_after = datetime.datetime.now(datetime.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    
     if isinstance(created_after, datetime.datetime):
         created_after_str = created_after.isoformat().replace("+00:00", "Z")
     else:
         created_after_str = created_after
-    
+
+    marketplace_ids = [m.strip() for m in AMAZON_MARKETPLACE_IDS.split(",") if m.strip()]
     params = {
-        "MarketplaceIds": AMAZON_MARKETPLACE_IDS,
-        "CreatedAfter": created_after_str,
-        "OrderStatuses": "Unshipped,PartiallyShipped,Shipped",
-        "FulfillmentChannels": "MFN",
+        "marketplaceIds": marketplace_ids,
+        "createdAfter": created_after_str,
+        "fulfillmentStatuses": ["UNSHIPPED", "PARTIALLY_SHIPPED", "SHIPPED"],
+        "fulfilledBy": ["MERCHANT"],
+        "includedData": ["BUYER"],
+        "maxResultsPerPage": 100,
     }
-    
-    response = call_amazon_sp_api("/orders/v0/orders", access_token, params)
-    orders = response.get("payload", {}).get("Orders", [])
-    log(f"📦 Amazon: {len(orders)} commande(s) récupérée(s)")
-    return orders
+    all_orders = []
+    pagination_token = None
+    while True:
+        if pagination_token:
+            params["paginationToken"] = pagination_token
+        response = call_amazon_sp_api(f"/orders/{AMAZON_ORDERS_VERSION}/orders", access_token, params)
+        orders = response.get("orders", [])
+        all_orders.extend(orders)
+        pagination = response.get("pagination", {}) or {}
+        pagination_token = pagination.get("nextToken")
+        if not pagination_token:
+            break
+
+    log(f"📦 Amazon: {len(all_orders)} commande(s) récupérée(s) (searchOrders v{AMAZON_ORDERS_VERSION})")
+    return all_orders
+
+
+def get_amazon_order_v2026(access_token, order_id):
+    """Récupère le détail d'une commande Amazon via getOrder (v2026-01-01), avec buyer et items."""
+    params = {"includedData": ["BUYER"]}
+    response = call_amazon_sp_api(
+        f"/orders/{AMAZON_ORDERS_VERSION}/orders/{order_id}",
+        access_token,
+        params,
+    )
+    return response.get("order")
+
+
+def _normalize_order_v2026_to_v0(order_v2026):
+    """Convertit une commande au format Orders API v2026 vers le format v0 (pour réutilisation du code existant)."""
+    if not order_v2026:
+        return None
+    order_id = order_v2026.get("orderId", "")
+    created = order_v2026.get("createdTime", "")
+    sales = order_v2026.get("salesChannel", {}) or {}
+    buyer = order_v2026.get("buyer", {}) or {}
+    recipient = order_v2026.get("recipient", {}) or {}
+    delivery = (recipient.get("deliveryAddress") or {}) if isinstance(recipient, dict) else {}
+    order_items = order_v2026.get("orderItems", [])
+
+    normalized = {
+        "AmazonOrderId": order_id,
+        "PurchaseDate": created,
+        "SalesChannel": sales.get("channelName", "Amazon"),
+        "MarketplaceId": sales.get("marketplaceId", ""),
+        "BuyerInfo": {"BuyerEmail": (buyer.get("buyerEmail") or "").strip()},
+        "ShippingAddress": {
+            "PostalCode": delivery.get("postalCode"),
+            "City": delivery.get("city"),
+            "CountryCode": delivery.get("countryCode"),
+        },
+    }
+    items_v0 = []
+    for it in order_items:
+        product = it.get("product") or {}
+        items_v0.append({
+            "SellerSKU": product.get("sellerSku", ""),
+            "ASIN": product.get("asin", ""),
+            "Title": product.get("title", ""),
+            "QuantityOrdered": it.get("quantityOrdered", 0),
+        })
+    normalized["_orderItems"] = items_v0
+    return normalized
+
 
 def fetch_amazon_order_items(access_token, order_id):
-    """Récupère les items d'une commande Amazon"""
+    """Récupère les items d'une commande Amazon (legacy v0). Utilisé en secours si besoin."""
     endpoint = f"/orders/v0/orders/{order_id}/orderItems"
     response = call_amazon_sp_api(endpoint, access_token)
     items = response.get("payload", {}).get("OrderItems", [])
     return items
 
 def build_amazon_order_summary(order, items=None):
-    """Construit un résumé de commande Amazon"""
+    """Construit un résumé de commande Amazon (order au format v0 ou normalisé v2026)."""
     order_id = order.get("AmazonOrderId")
     purchase_date = order.get("PurchaseDate")
     marketplace = order.get("SalesChannel", "Amazon")
     buyer_info = order.get("BuyerInfo", {})
-    buyer_email = buyer_info.get("BuyerEmail", "")
-    shipping_address = order.get("ShippingAddress", {})
-    
+    buyer_email = (buyer_info.get("BuyerEmail") or "").strip()
+    shipping_address = order.get("ShippingAddress", {}) or {}
+    # Items peuvent venir de l'appelant (v0) ou être attachés à la commande normalisée (_orderItems)
+    use_items = items if items is not None else order.get("_orderItems")
     line_summaries = []
-    if items:
-        for item in items:
+    if use_items:
+        for item in use_items:
             sku = item.get("SellerSKU") or item.get("ASIN", "")
             qty = item.get("QuantityOrdered", 0)
             title = item.get("Title", "")
             line_summaries.append(f"- {sku} x{qty} · {title}")
-    
+
     shipping_address_str = " | ".join(filter(None, [
         shipping_address.get("PostalCode"),
         shipping_address.get("City"),
@@ -788,31 +865,42 @@ def poll_amazon_and_notify():
     
     processed_list = list(state.get("processed_order_ids", []))
     processed_ids = set(processed_list)
-    
+
+    # Normaliser les commandes v2026 vers format v0 et filtrer les nouvelles
     new_orders = []
     max_seen_dt = last_seen_dt
-    
-    for order in orders:
+    for order_v2026 in orders:
+        order = _normalize_order_v2026_to_v0(order_v2026)
+        if not order:
+            continue
         order_id = order.get("AmazonOrderId")
         if not order_id:
             continue
         if order_id in processed_ids:
             continue
+        # Si l'email n'est pas présent (searchOrders peut ne pas l'inclure selon les rôles), on appelle getOrder
+        if not (order.get("BuyerInfo") or {}).get("BuyerEmail"):
+            try:
+                full_order = get_amazon_order_v2026(access_token, order_id)
+                if full_order:
+                    order = _normalize_order_v2026_to_v0(full_order)
+            except Exception as e:
+                log(f"⚠️ Erreur getOrder pour {order_id}: {e}")
         purchase_date = parse_iso8601(order.get("PurchaseDate"))
         new_orders.append(order)
         if purchase_date and (not max_seen_dt or purchase_date > max_seen_dt):
             max_seen_dt = purchase_date
-    
+
     if not new_orders:
         log("ℹ️ Amazon: aucune nouvelle commande")
         return {"message": "Aucune nouvelle commande Amazon"}, 200
-    
+
     notifications = []
     for order in new_orders:
         order_id = order.get("AmazonOrderId")
-        buyer_info = order.get("BuyerInfo", {})
-        customer_email = buyer_info.get("BuyerEmail", "")
-        
+        buyer_info = order.get("BuyerInfo", {}) or {}
+        customer_email = (buyer_info.get("BuyerEmail") or "").strip()
+
         # Détection de la langue basée sur le marketplace
         marketplace_id = order.get("MarketplaceId", "")
         sales_channel = order.get("SalesChannel", "")
@@ -827,16 +915,11 @@ def poll_amazon_and_notify():
             language_email = "nl"
         elif "BE" in sales_channel or marketplace_id == "AMEN7PMS3EDWL":
             language_email = "fr"  # Belgique = français par défaut
-        
-        # Récupérer les items de la commande
-        try:
-            items = fetch_amazon_order_items(access_token, order_id)
-        except Exception as e:
-            log(f"⚠️ Erreur récupération items pour commande {order_id}: {e}")
-            items = []
-        
+
+        # Items déjà dans la commande normalisée (v2026)
+        order_items = order.get("_orderItems") or []
         line_items = []
-        for item in items:
+        for item in order_items:
             sku = item.get("SellerSKU") or ""
             qty = item.get("QuantityOrdered", 0)
             title = item.get("Title", "")
@@ -845,7 +928,7 @@ def poll_amazon_and_notify():
                 "sku": sku,
                 "quantity": qty,
             })
-        
+
         if not line_items:
             log(f"⚠️ Amazon commande {order_id}: aucun item trouvé")
             notifications.append({
@@ -854,7 +937,16 @@ def poll_amazon_and_notify():
                 "result": {"error": "Aucun item trouvé dans la commande"},
             })
             continue
-        
+
+        if not customer_email:
+            log(f"⚠️ Amazon commande {order_id}: email acheteur non disponible (getOrder v2026)")
+            notifications.append({
+                "order_id": order_id,
+                "status": 400,
+                "result": {"error": "Email manquant"},
+            })
+            continue
+
         payload, status = process_order(customer_email, language_email, line_items, order_id=order_id)
         success = status == 200
         notifications.append({
