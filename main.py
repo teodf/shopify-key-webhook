@@ -714,11 +714,11 @@ def fetch_amazon_orders(access_token, created_after=None):
     else:
         created_after_str = created_after
 
-    marketplace_ids = [m.strip() for m in AMAZON_MARKETPLACE_IDS.split(",") if m.strip()]
+    # Doc SP-API : marketplaceIds et fulfillmentStatuses en format comma-separated (pas paramètre répété).
+    marketplace_ids_str = ",".join(m.strip() for m in AMAZON_MARKETPLACE_IDS.split(",") if m.strip())
     params = {
-        "marketplaceIds": marketplace_ids,
+        "marketplaceIds": marketplace_ids_str,
         "createdAfter": created_after_str,
-        # Format attendu par l'API : une seule valeur comma-separated (pas paramètre répété).
         "fulfillmentStatuses": "UNSHIPPED,PARTIALLY_SHIPPED,SHIPPED",
         "fulfilledBy": ["MERCHANT"],
         "includedData": ["BUYER"],
