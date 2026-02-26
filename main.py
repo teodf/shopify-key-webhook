@@ -718,7 +718,8 @@ def fetch_amazon_orders(access_token, created_after=None):
     params = {
         "marketplaceIds": marketplace_ids,
         "createdAfter": created_after_str,
-        "fulfillmentStatuses": ["UNSHIPPED", "PARTIALLY_SHIPPED", "SHIPPED"],
+        # Format attendu par l'API : une seule valeur comma-separated (pas paramètre répété).
+        "fulfillmentStatuses": "UNSHIPPED,PARTIALLY_SHIPPED,SHIPPED",
         "fulfilledBy": ["MERCHANT"],
         "includedData": ["BUYER"],
         "maxResultsPerPage": 100,
