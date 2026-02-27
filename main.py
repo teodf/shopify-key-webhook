@@ -29,6 +29,11 @@ FROM_EMAIL = "help@footbar.com"  # adresse expéditrice
 MIRAKL_API_BASE_URL = os.environ.get("MIRAKL_API_BASE_URL", "https://marketplace-decathlon-eu.mirakl.net")
 MIRAKL_API_KEY = os.environ.get("MIRAKL_API_KEY")
 MIRAKL_STATE_FILE = os.environ.get("MIRAKL_STATE_FILE", "mirakl_state.json")
+# Shop IDs (Footbar BE/DE/FR/IT/NL/PT, CZ, HU, PL, RO) — liste séparée par des virgules
+MIRAKL_SHOP_IDS = [
+    s.strip() for s in (os.environ.get("MIRAKL_SHOP_IDS") or "16598,17825,17824,17823,17822").split(",")
+    if s.strip()
+]
 
 # Amazon SP-API
 AMAZON_LWA_CLIENT_ID = os.environ.get("AMAZON_LWA_CLIENT_ID")
@@ -381,26 +386,29 @@ def fetch_mirakl_orders():
 
     all_orders = []
     max_per_page = 100
-    offset = 0
 
-    while True:
-        url = f"{base_url}?max={max_per_page}&offset={offset}"
-        response = requests.get(url, headers=headers, timeout=20)
-        response.raise_for_status()
-        payload = response.json()
+    for shop_id in MIRAKL_SHOP_IDS:
+        offset = 0
+        shop_orders = 0
+        while True:
+            url = f"{base_url}?max={max_per_page}&offset={offset}&shop_id={shop_id}"
+            response = requests.get(url, headers=headers, timeout=20)
+            response.raise_for_status()
+            payload = response.json()
 
-        orders = payload.get("orders", [])
-        total_count = payload.get("total_count", 0)
+            orders = payload.get("orders", [])
+            total_count = payload.get("total_count", 0)
 
-        all_orders.extend(orders)
-        log(f"📦 Mirakl: {len(orders)} commande(s) récupérée(s) (offset={offset}, total={len(all_orders)}/{total_count})")
+            all_orders.extend(orders)
+            shop_orders += len(orders)
+            log(f"📦 Mirakl shop_id={shop_id}: {len(orders)} commande(s) (offset={offset}, total shop={shop_orders}/{total_count})")
 
-        if len(orders) < max_per_page or len(all_orders) >= total_count:
-            break
+            if len(orders) < max_per_page or shop_orders >= total_count:
+                break
 
-        offset += max_per_page
+            offset += max_per_page
 
-    log(f"📦 Mirakl: {len(all_orders)} commande(s) récupérée(s) au total")
+    log(f"📦 Mirakl: {len(all_orders)} commande(s) récupérée(s) au total (tous shops)")
     return all_orders
 
 def build_mirakl_order_summary(order):
