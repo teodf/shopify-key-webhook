@@ -820,8 +820,12 @@ def call_amazon_sp_api_post(endpoint_path, access_token, body_dict, params=None)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
         return json.loads(result.stdout) if result.stdout.strip() else {}
     except subprocess.CalledProcessError as e:
-        log(f"❌ Erreur awscurl POST: {e.stderr}")
-        raise RuntimeError(f"Erreur lors de l'appel Amazon SP-API: {e.stderr}")
+        err_msg = (e.stderr or "").strip()
+        out_msg = (getattr(e, "stdout", None) or "").strip()
+        log(f"❌ Erreur awscurl POST stderr: {err_msg}")
+        if out_msg:
+            log(f"❌ Erreur awscurl POST stdout (réponse API): {out_msg[:500]}")
+        raise RuntimeError(f"Erreur SP-API: {err_msg or out_msg}")
     except json.JSONDecodeError:
         return {}
 
@@ -879,28 +883,38 @@ def get_amazon_order_v2026(access_token, order_id):
 
 def get_messaging_actions_for_order(access_token, order_id, marketplace_id):
     """Liste les types de message disponibles pour une commande (Messaging API). Nécessite rôle Buyer Communication."""
-    params = {"marketplaceIds": [marketplace_id]}
-    response = call_amazon_sp_api(
-        f"/messaging/v1/orders/{order_id}",
-        access_token,
-        params,
-    )
+    try:
+        params = {"marketplaceIds": [marketplace_id]}
+        response = call_amazon_sp_api(
+            f"/messaging/v1/orders/{order_id}",
+            access_token,
+            params,
+        )
+    except Exception as e:
+        log(f"❌ getMessagingActionsForOrder pour {order_id}: {e}")
+        return []
     actions = response.get("_links", {}).get("actions", [])
-    return [a.get("name") for a in actions if a.get("name")]
+    names = [a.get("name") for a in actions if a.get("name")]
+    if not names:
+        log(f"⚠️ getMessagingActionsForOrder: aucune action pour {order_id} (réponse: _links.actions={actions!r})")
+    return names
 
 
 def send_amazon_buyer_message(access_token, order_id, marketplace_id, message_text):
     """
     Envoie un message au buyer via la Messaging API (Amazon transmet au client par email/message).
-    Utilise createDigitalAccessKey si disponible, sinon createConfirmOrderDetails.
+    Utilise createDigitalAccessKey si disponible (max 400 car.), sinon createConfirmOrderDetails (max 2000).
     Nécessite le rôle Buyer Communication (pas Tax Invoicing).
     """
     available = get_messaging_actions_for_order(access_token, order_id, marketplace_id)
+    log(f"📋 Messaging API actions disponibles pour {order_id}: {available}")
     params = {"marketplaceIds": [marketplace_id]}
     path_base = f"/messaging/v1/orders/{order_id}/messages"
-    body = {"text": message_text}
     if "digitalAccessKey" in available:
         path = f"{path_base}/digitalAccessKey"
+        # createDigitalAccessKey: text max 400 caractères
+        text = message_text[:400] if len(message_text) > 400 else message_text
+        body = {"text": text}
         try:
             call_amazon_sp_api_post(path, access_token, body, params)
             log(f"📩 Amazon Messaging: clé envoyée au buyer via digitalAccessKey (commande {order_id})")
@@ -909,6 +923,9 @@ def send_amazon_buyer_message(access_token, order_id, marketplace_id, message_te
             log(f"⚠️ digitalAccessKey échoué pour {order_id}: {e}, fallback confirmOrderDetails")
     if "confirmOrderDetails" in available:
         path = f"{path_base}/confirmOrderDetails"
+        # createConfirmOrderDetails: text max 2000 caractères
+        text = message_text[:2000] if len(message_text) > 2000 else message_text
+        body = {"text": text}
         try:
             call_amazon_sp_api_post(path, access_token, body, params)
             log(f"📩 Amazon Messaging: clé envoyée au buyer via confirmOrderDetails (commande {order_id})")
