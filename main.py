@@ -256,17 +256,12 @@ def write_keys(spreadsheet_id, range_name, values):
         valueInputOption='RAW', body=body).execute()
     return result
 
-# 📩 Fonction d'envoi d'email simple pour Amazon
-def send_amazon_simple_email(to_email, licence_key, order_id, language_code="fr"):
-    """Envoie un email simple pour les commandes Amazon sans template"""
-    try:
-        log(f"📤 Envoi email Amazon simple à {to_email} avec clé {licence_key} pour commande {order_id} (langue: {language_code})")
-
-        # Déterminer si on utilise le français ou l'anglais
-        is_french = language_code and language_code.lower().startswith("fr")
-        
-        if is_french:
-            email_content = f"""Bonjour,
+# 📩 Texte du message pour commande Amazon (réutilisé pour email ou Messaging API)
+def _amazon_license_message_text(licence_key, order_id, language_code="fr"):
+    """Retourne le texte du message (clé + instructions) pour une commande Amazon."""
+    is_french = language_code and language_code.lower().startswith("fr")
+    if is_french:
+        return f"""Bonjour,
 
 Concernant votre commande Amazon {order_id},  
 voici le code requis pour accéder au service inclus avec votre produit Footbar :
@@ -277,9 +272,7 @@ Si vous rencontrez une difficulté technique pour l'utiliser, merci de répondre
 
 Cordialement,  
 Footbar"""
-            subject = "Votre code d'accès Footbar pour la commande {order_id}"
-        else:
-            email_content = f"""Hello,
+    return f"""Hello,
 
 Regarding your Amazon order {order_id},  
 here is the code required to access the service included with your Footbar product:
@@ -290,7 +283,17 @@ If you encounter any technical difficulties using it, please reply to this messa
 
 Best regards,  
 Footbar"""
-            subject = "Your Footbar access code for order {order_id}"
+
+
+# 📩 Fonction d'envoi d'email simple pour Amazon
+def send_amazon_simple_email(to_email, licence_key, order_id, language_code="fr"):
+    """Envoie un email simple pour les commandes Amazon sans template"""
+    try:
+        log(f"📤 Envoi email Amazon simple à {to_email} avec clé {licence_key} pour commande {order_id} (langue: {language_code})")
+
+        email_content = _amazon_license_message_text(licence_key, order_id, language_code)
+        is_french = language_code and language_code.lower().startswith("fr")
+        subject = "Votre code d'accès Footbar pour la commande {order_id}" if is_french else "Your Footbar access code for order {order_id}"
 
         message = Mail(
             from_email=(FROM_EMAIL, "Footbar"),
@@ -549,6 +552,88 @@ def process_order(customer_email, language_email, line_items, order_id=None):
 
     return response, 200
 
+
+def process_order_via_amazon_messaging(access_token, order_id, marketplace_id, language_email, line_items):
+    """
+    Traite une commande Amazon sans email buyer : réserve les clés (placeholder dans la sheet)
+    et envoie la clé au client via la Messaging API (Amazon lui transmet par email/message).
+    Nécessite le rôle Buyer Communication sur l'app SP-API.
+    """
+    language_email = language_email or "fr"
+    if not line_items:
+        return {"error": "Aucun produit trouvé"}, 400
+
+    bundle_skus = {"B2C001_BUNDLE"}
+    subscription_skus = {"FOOTBAR_GOLD_1_AN_BUNDLE"}
+    order_sku_set = set()
+    for item in line_items:
+        sku_clean = (item.get("sku") or "").strip().upper()
+        if sku_clean:
+            order_sku_set.add(sku_clean)
+    skip_subscription_items = bool(bundle_skus & order_sku_set)
+
+    placeholder_email = f"amazon-{order_id}@messaging.footbar"
+    keys_and_skus = []
+
+    for item in line_items:
+        raw_sku = (item.get("sku") or "").strip().upper()
+        qty_raw = item.get("quantity", 0)
+        try:
+            qty = int(qty_raw)
+        except Exception:
+            qty = 0
+        if skip_subscription_items and raw_sku in subscription_skus:
+            continue
+        if not raw_sku or qty <= 0:
+            continue
+        config = find_product_config_for_sku(raw_sku)
+        if not config:
+            continue
+        for _ in range(qty):
+            key = get_and_use_license_key_gsheet(
+                placeholder_email,
+                config["spreadsheet_id"],
+                config["range_name"],
+                order_id=order_id,
+            )
+            if not key:
+                return {"error": f"Aucune clé disponible pour {raw_sku}"}, 500
+            keys_and_skus.append((key, raw_sku))
+
+    if not keys_and_skus:
+        return {"error": "Aucun produit configuré trouvé dans la commande"}, 400
+
+    if len(keys_and_skus) == 1:
+        message_text = _amazon_license_message_text(keys_and_skus[0][0], order_id, language_email)
+    else:
+        keys_list = "\n".join(f"• Code : {k}" for k, _ in keys_and_skus)
+        if language_email and language_email.lower().startswith("fr"):
+            message_text = f"""Bonjour,
+
+Concernant votre commande Amazon {order_id}, voici les codes pour accéder au service inclus avec votre produit Footbar :
+
+{keys_list}
+
+Cordialement, Footbar"""
+        else:
+            message_text = f"""Hello,
+
+Regarding your Amazon order {order_id}, here are the codes for the service included with your Footbar product:
+
+{keys_list}
+
+Best regards, Footbar"""
+
+    ok = send_amazon_buyer_message(access_token, order_id, marketplace_id, message_text)
+    if not ok:
+        return {"error": "Échec d'envoi du message au buyer (vérifier le rôle Buyer Communication)"}, 500
+    return {
+        "message": f"{len(keys_and_skus)} clé(s) envoyée(s) via Messaging API",
+        "total_keys": len(keys_and_skus),
+        "channel": "amazon_messaging",
+    }, 200
+
+
 def poll_mirakl_and_notify():
     try:
         orders = fetch_mirakl_orders()
@@ -709,6 +794,37 @@ def call_amazon_sp_api(endpoint_path, access_token, params=None):
         log(f"❌ Erreur parsing JSON: {e}")
         raise RuntimeError(f"Réponse Amazon SP-API invalide: {e}")
 
+
+def call_amazon_sp_api_post(endpoint_path, access_token, body_dict, params=None):
+    """Appelle l'API Amazon SP-API en POST (ex: Messaging API) avec body JSON."""
+    if not AMAZON_SP_API_ACCESS_KEY or not AMAZON_SP_API_SECRET_KEY:
+        raise RuntimeError("Credentials AWS pour Amazon SP-API manquants")
+    url = f"{AMAZON_SP_API_ENDPOINT.rstrip('/')}{endpoint_path}"
+    if params:
+        url = f"{url}?{_amazon_sp_api_query_string(params)}"
+    body_json = json.dumps(body_dict, ensure_ascii=False)
+    cmd = [
+        "awscurl",
+        "--region", AMAZON_SP_API_REGION,
+        "--service", "execute-api",
+        "--access_key", AMAZON_SP_API_ACCESS_KEY,
+        "--secret_key", AMAZON_SP_API_SECRET_KEY,
+        "--request", "POST",
+        "--header", f"x-amz-access-token: {access_token}",
+        "--header", "Content-Type: application/json",
+        "--header", "Accept: application/json",
+        "--data", body_json,
+        url,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+        return json.loads(result.stdout) if result.stdout.strip() else {}
+    except subprocess.CalledProcessError as e:
+        log(f"❌ Erreur awscurl POST: {e.stderr}")
+        raise RuntimeError(f"Erreur lors de l'appel Amazon SP-API: {e.stderr}")
+    except json.JSONDecodeError:
+        return {}
+
 # Orders API v2026-01-01 (searchOrders + getOrder avec buyerEmail et items)
 AMAZON_ORDERS_VERSION = "2026-01-01"
 
@@ -751,13 +867,57 @@ def fetch_amazon_orders(access_token, created_after=None):
 
 def get_amazon_order_v2026(access_token, order_id):
     """Récupère le détail d'une commande Amazon via getOrder (v2026-01-01), avec buyer et items."""
-    params = {"includedData": ["BUYER"]}
+    # Doc: includedData comma-separated pour recevoir buyer, recipient, fulfillment, etc.
+    params = {"includedData": "BUYER,RECIPIENT,FULFILLMENT,PACKAGES"}
     response = call_amazon_sp_api(
         f"/orders/{AMAZON_ORDERS_VERSION}/orders/{order_id}",
         access_token,
         params,
     )
     return response.get("order")
+
+
+def get_messaging_actions_for_order(access_token, order_id, marketplace_id):
+    """Liste les types de message disponibles pour une commande (Messaging API). Nécessite rôle Buyer Communication."""
+    params = {"marketplaceIds": [marketplace_id]}
+    response = call_amazon_sp_api(
+        f"/messaging/v1/orders/{order_id}",
+        access_token,
+        params,
+    )
+    actions = response.get("_links", {}).get("actions", [])
+    return [a.get("name") for a in actions if a.get("name")]
+
+
+def send_amazon_buyer_message(access_token, order_id, marketplace_id, message_text):
+    """
+    Envoie un message au buyer via la Messaging API (Amazon transmet au client par email/message).
+    Utilise createDigitalAccessKey si disponible, sinon createConfirmOrderDetails.
+    Nécessite le rôle Buyer Communication (pas Tax Invoicing).
+    """
+    available = get_messaging_actions_for_order(access_token, order_id, marketplace_id)
+    params = {"marketplaceIds": [marketplace_id]}
+    path_base = f"/messaging/v1/orders/{order_id}/messages"
+    body = {"text": message_text}
+    if "digitalAccessKey" in available:
+        path = f"{path_base}/digitalAccessKey"
+        try:
+            call_amazon_sp_api_post(path, access_token, body, params)
+            log(f"📩 Amazon Messaging: clé envoyée au buyer via digitalAccessKey (commande {order_id})")
+            return True
+        except Exception as e:
+            log(f"⚠️ digitalAccessKey échoué pour {order_id}: {e}, fallback confirmOrderDetails")
+    if "confirmOrderDetails" in available:
+        path = f"{path_base}/confirmOrderDetails"
+        try:
+            call_amazon_sp_api_post(path, access_token, body, params)
+            log(f"📩 Amazon Messaging: clé envoyée au buyer via confirmOrderDetails (commande {order_id})")
+            return True
+        except Exception as e:
+            log(f"❌ confirmOrderDetails échoué pour {order_id}: {e}")
+            return False
+    log(f"❌ Aucune action Messaging disponible pour {order_id} (disponibles: {available})")
+    return False
 
 
 def _normalize_order_v2026_to_v0(order_v2026):
@@ -948,12 +1108,20 @@ def poll_amazon_and_notify():
             continue
 
         if not customer_email:
-            log(f"⚠️ Amazon commande {order_id}: email acheteur non disponible (getOrder v2026)")
-            notifications.append({
-                "order_id": order_id,
-                "status": 400,
-                "result": {"error": "Email manquant"},
-            })
+            # Fallback : envoyer la clé via Messaging API (Amazon transmet au buyer). Nécessite rôle Buyer Communication.
+            log(f"ℹ️ Amazon commande {order_id}: pas d'email buyer, envoi de la clé via Messaging API")
+            if marketplace_id:
+                payload, status = process_order_via_amazon_messaging(
+                    access_token, order_id, marketplace_id, language_email, line_items
+                )
+            else:
+                payload, status = {"error": "MarketplaceId manquant pour Messaging API"}, 400
+            notifications.append({"order_id": order_id, "status": status, "result": payload})
+            if status == 200 and order_id and order_id not in processed_ids:
+                processed_ids.add(order_id)
+                processed_list.append(order_id)
+            else:
+                log(f"⚠️ Amazon commande {order_id} (Messaging): {payload}")
             continue
 
         payload, status = process_order(customer_email, language_email, line_items, order_id=order_id)
