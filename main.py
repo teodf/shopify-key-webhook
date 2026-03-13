@@ -507,22 +507,15 @@ def process_order(customer_email, language_email, line_items, order_id=None):
             if not key:
                 return {"error": f"Aucune clé disponible pour {sku}"}, 500
 
-            # Pour les commandes Amazon, utiliser l'email simple
-            if order_id:
-                email_sent = send_amazon_simple_email(
-                    customer_email,
-                    key,
-                    order_id,
-                    language_code=language_email,
-                )
-            else:
-                email_sent = send_email_with_template(
-                    customer_email,
-                    key,
-                    language_email,
-                    template_fr_override=config.get("template_fr"),
-                    template_en_override=config.get("template_en"),
-                )
+            # Toujours utiliser le template SendGrid (y compris pour Amazon/Mirakl avec order_id)
+            email_sent = send_email_with_template(
+                customer_email,
+                key,
+                language_email,
+                template_fr_override=config.get("template_fr"),
+                template_en_override=config.get("template_en"),
+                order_id=order_id,
+            )
             if not email_sent:
                 return {"error": f"Échec d'envoi d'email pour {sku}"}, 500
 
@@ -1124,38 +1117,21 @@ def poll_amazon_and_notify():
             })
             continue
 
-        if not customer_email:
-            # Fallback : envoyer la clé via Messaging API (Amazon transmet au buyer). Nécessite rôle Buyer Communication.
-            log(f"ℹ️ Amazon commande {order_id}: pas d'email buyer, envoi de la clé via Messaging API")
-            if marketplace_id:
-                payload, status = process_order_via_amazon_messaging(
-                    access_token, order_id, marketplace_id, language_email, line_items
-                )
-            else:
-                payload, status = {"error": "MarketplaceId manquant pour Messaging API"}, 400
-            notifications.append({"order_id": order_id, "status": status, "result": payload})
-            if status == 200 and order_id and order_id not in processed_ids:
-                processed_ids.add(order_id)
-                processed_list.append(order_id)
-            else:
-                log(f"⚠️ Amazon commande {order_id} (Messaging): {payload}")
-            continue
-
-        payload, status = process_order(customer_email, language_email, line_items, order_id=order_id)
-        success = status == 200
-        notifications.append({
-            "order_id": order_id,
-            "status": status,
-            "result": payload,
-        })
-        
-        if success:
-            if order_id and order_id not in processed_ids:
-                processed_ids.add(order_id)
-                processed_list.append(order_id)
+        # Commandes Amazon : toujours utiliser la Messaging API (Amazon transmet au buyer).
+        # Nécessite le rôle Buyer Communication sur l'app SP-API.
+        if not marketplace_id:
+            payload, status = {"error": "MarketplaceId manquant pour Messaging API"}, 400
         else:
-            log(f"⚠️ Amazon commande {order_id} non traitée ({status}): {payload}")
-    
+            payload, status = process_order_via_amazon_messaging(
+                access_token, order_id, marketplace_id, language_email, line_items
+            )
+        notifications.append({"order_id": order_id, "status": status, "result": payload})
+        if status == 200 and order_id and order_id not in processed_ids:
+            processed_ids.add(order_id)
+            processed_list.append(order_id)
+        elif status != 200:
+            log(f"⚠️ Amazon commande {order_id} (Messaging): {payload}")
+
     state["processed_order_ids"] = processed_list[-200:]  # Garder les 200 dernières
     if max_seen_dt:
         state["last_seen_purchase_date"] = max_seen_dt.isoformat()
