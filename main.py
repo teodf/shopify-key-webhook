@@ -3,7 +3,6 @@ import logging
 import datetime
 import os
 import json
-import os.path
 import pickle
 import re
 import requests
@@ -256,9 +255,9 @@ def write_keys(spreadsheet_id, range_name, values):
         valueInputOption='RAW', body=body).execute()
     return result
 
-# 📩 Texte du message pour commande Amazon (réutilisé pour email ou Messaging API)
+# 📩 Texte du message pour la Messaging API Amazon
 def _amazon_license_message_text(licence_key, order_id, language_code="fr"):
-    """Retourne le texte du message (clé + instructions) pour une commande Amazon."""
+    """Retourne le texte du message (clé + instructions) envoyé au buyer via Messaging API."""
     is_french = language_code and language_code.lower().startswith("fr")
     if is_french:
         return f"""Bonjour,
@@ -284,33 +283,6 @@ If you encounter any technical difficulties using it, please reply to this messa
 Best regards,  
 Footbar"""
 
-
-# 📩 Fonction d'envoi d'email simple pour Amazon
-def send_amazon_simple_email(to_email, licence_key, order_id, language_code="fr"):
-    """Envoie un email simple pour les commandes Amazon sans template"""
-    try:
-        log(f"📤 Envoi email Amazon simple à {to_email} avec clé {licence_key} pour commande {order_id} (langue: {language_code})")
-
-        email_content = _amazon_license_message_text(licence_key, order_id, language_code)
-        is_french = language_code and language_code.lower().startswith("fr")
-        subject = "Votre code d'accès Footbar pour la commande {order_id}" if is_french else "Your Footbar access code for order {order_id}"
-
-        message = Mail(
-            from_email=(FROM_EMAIL, "Footbar"),
-            to_emails=to_email,
-            subject=subject,
-            plain_text_content=email_content
-        )
-
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
-        response = sg.send(message)
-        log(f"📨 Réponse SendGrid: {response.status_code}")
-        log(f"📨 Headers: {response.headers}")
-        return response.status_code == 202
-
-    except Exception as e:
-        log(f"❌ Erreur SendGrid : {e}")
-        return False
 
 # 📩 Fonction d'envoi d'email
 def send_email_with_template(to_email, licence_key, language_code, template_fr_override=None, template_en_override=None, order_id=None):
@@ -967,56 +939,6 @@ def _normalize_order_v2026_to_v0(order_v2026):
     return normalized
 
 
-def fetch_amazon_order_items(access_token, order_id):
-    """Récupère les items d'une commande Amazon (legacy v0). Utilisé en secours si besoin."""
-    endpoint = f"/orders/v0/orders/{order_id}/orderItems"
-    response = call_amazon_sp_api(endpoint, access_token)
-    items = response.get("payload", {}).get("OrderItems", [])
-    return items
-
-def build_amazon_order_summary(order, items=None):
-    """Construit un résumé de commande Amazon (order au format v0 ou normalisé v2026)."""
-    order_id = order.get("AmazonOrderId")
-    purchase_date = order.get("PurchaseDate")
-    marketplace = order.get("SalesChannel", "Amazon")
-    buyer_info = order.get("BuyerInfo", {})
-    buyer_email = (buyer_info.get("BuyerEmail") or "").strip()
-    shipping_address = order.get("ShippingAddress", {}) or {}
-    # Items peuvent venir de l'appelant (v0) ou être attachés à la commande normalisée (_orderItems)
-    use_items = items if items is not None else order.get("_orderItems")
-    line_summaries = []
-    if use_items:
-        for item in use_items:
-            sku = item.get("SellerSKU") or item.get("ASIN", "")
-            qty = item.get("QuantityOrdered", 0)
-            title = item.get("Title", "")
-            line_summaries.append(f"- {sku} x{qty} · {title}")
-
-    shipping_address_str = " | ".join(filter(None, [
-        shipping_address.get("PostalCode"),
-        shipping_address.get("City"),
-        shipping_address.get("CountryCode"),
-    ]))
-    
-    lines_to_join = [
-        f"Commande : {order_id}",
-        f"Créée le : {purchase_date}",
-        f"Marketplace : {marketplace}",
-        f"Email : {buyer_email}",
-        "Lignes :",
-    ]
-    if line_summaries:
-        lines_to_join.extend(line_summaries)
-    else:
-        lines_to_join.append("(items non récupérés)")
-    lines_to_join.extend([
-        "",
-        "Adresse livraison :",
-        shipping_address_str or "(non communiquée)",
-    ])
-    
-    return "\n".join(lines_to_join)
-
 def poll_amazon_and_notify():
     """Poll Amazon et envoie les notifications pour les nouvelles commandes"""
     try:
@@ -1077,8 +999,6 @@ def poll_amazon_and_notify():
     notifications = []
     for order in new_orders:
         order_id = order.get("AmazonOrderId")
-        buyer_info = order.get("BuyerInfo", {}) or {}
-        customer_email = (buyer_info.get("BuyerEmail") or "").strip()
 
         # Détection de la langue basée sur le marketplace
         marketplace_id = order.get("MarketplaceId", "")
