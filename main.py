@@ -319,6 +319,106 @@ def send_email_with_template(to_email, licence_key, language_code, template_fr_o
         log(f"❌ Erreur SendGrid : {e}")
         return False
 
+def _fmt_money(value):
+    try:
+        return f"{float(value):.2f}"
+    except Exception:
+        return "0.00"
+
+def _fmt_address_block(address):
+    if not isinstance(address, dict):
+        return "(non renseignée)"
+    lines = [
+        f"{(address.get('first_name') or '').strip()} {(address.get('last_name') or '').strip()}".strip(),
+        address.get("company") or "",
+        address.get("address1") or "",
+        address.get("address2") or "",
+        f"{(address.get('zip') or '').strip()} {(address.get('city') or '').strip()}".strip(),
+        address.get("province") or "",
+        address.get("country") or "",
+        address.get("phone") or "",
+    ]
+    clean = [line for line in lines if line]
+    return "\n".join(clean) if clean else "(non renseignée)"
+
+def send_invoice_email(invoice_data):
+    try:
+        customer = invoice_data.get("customer", {}) if isinstance(invoice_data, dict) else {}
+        to_email = (customer.get("email") or invoice_data.get("email") or "").strip()
+        if not to_email:
+            return False, "Email client manquant"
+
+        currency = invoice_data.get("currency") or "EUR"
+        prices = invoice_data.get("prices", {}) if isinstance(invoice_data.get("prices"), dict) else {}
+        line_items = invoice_data.get("line_items", []) if isinstance(invoice_data.get("line_items"), list) else []
+
+        line_items_text = []
+        for idx, item in enumerate(line_items, start=1):
+            line_items_text.append(
+                "\n".join([
+                    f"{idx}. {item.get('title') or '(sans titre)'}",
+                    f"   Variant: {item.get('variant_title') or '-'}",
+                    f"   SKU: {item.get('sku') or '-'}",
+                    f"   Product ID: {item.get('product_id') or '-'} | Variant ID: {item.get('variant_id') or '-'}",
+                    f"   Quantite: {item.get('quantity') or 0}",
+                    f"   Prix unitaire: {_fmt_money(item.get('price'))} {currency}",
+                    f"   Total ligne: {_fmt_money(item.get('total'))} {currency}",
+                ])
+            )
+        if not line_items_text:
+            line_items_text = ["Aucune ligne produit."]
+
+        order_name = invoice_data.get("order_name") or invoice_data.get("order_id") or "(sans numero)"
+        subject = f"Facture - commande {order_name}"
+        body = "\n".join([
+            "Bonjour,",
+            "",
+            "Veuillez trouver ci-dessous les details de votre facture :",
+            "",
+            f"Order ID: {invoice_data.get('order_id') or '-'}",
+            f"Order Name: {invoice_data.get('order_name') or '-'}",
+            f"Order Number: {invoice_data.get('order_number') or '-'}",
+            f"Date de creation: {invoice_data.get('created_at') or '-'}",
+            f"Statut financier: {invoice_data.get('financial_status') or '-'}",
+            "",
+            f"Sous-total: {_fmt_money(prices.get('subtotal'))} {currency}",
+            f"Livraison: {_fmt_money(prices.get('shipping'))} {currency}",
+            f"Taxes: {_fmt_money(prices.get('tax'))} {currency}",
+            f"Total: {_fmt_money(prices.get('total'))} {currency}",
+            "",
+            "Adresse de facturation:",
+            _fmt_address_block(invoice_data.get("billing_address")),
+            "",
+            "Adresse de livraison:",
+            _fmt_address_block(invoice_data.get("shipping_address")),
+            "",
+            "Client:",
+            f"ID: {customer.get('id') or '-'}",
+            f"Nom: {(customer.get('first_name') or '').strip()} {(customer.get('last_name') or '').strip()}".strip() or "-",
+            f"Email: {customer.get('email') or '-'}",
+            f"Telephone: {customer.get('phone') or '-'}",
+            "",
+            "Lignes de commande:",
+            "\n\n".join(line_items_text),
+            "",
+            "Merci pour votre commande.",
+            "Footbar",
+        ])
+
+        message = Mail(
+            from_email=(FROM_EMAIL, "Footbar"),
+            to_emails=to_email,
+            subject=subject,
+            plain_text_content=body,
+        )
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        response = sg.send(message)
+        log(f"📨 Facture envoyée à {to_email} (SendGrid: {response.status_code})")
+        return response.status_code == 202, None
+    except Exception as e:
+        log(f"❌ Erreur envoi facture: {e}")
+        return False, str(e)
+
 def parse_iso8601(value):
     if not value:
         return None
@@ -1127,6 +1227,30 @@ def webhook():
     except Exception as e:
         log(f"❌ Erreur webhook: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route("/webhook/invoice", methods=["POST"])
+def webhook_invoice():
+    try:
+        raw_data = request.data.decode("utf-8")
+        log(f"📥 RAW invoice body: {raw_data}")
+        data = json.loads(raw_data)
+    except json.JSONDecodeError as e:
+        log(f"❌ Erreur JSON invoice: {e}")
+        return jsonify({"error": "Format JSON invalide"}), 400
+    except Exception as e:
+        log(f"❌ Erreur lecture payload invoice: {e}")
+        return jsonify({"error": str(e)}), 500
+
+    customer = data.get("customer", {}) if isinstance(data.get("customer"), dict) else {}
+    customer_email = (customer.get("email") or data.get("email") or "").strip()
+    if not customer_email:
+        return jsonify({"error": "Email client manquant dans customer.email"}), 400
+    data["email"] = customer_email
+
+    success, err = send_invoice_email(data)
+    if not success:
+        return jsonify({"error": err or "Echec envoi facture"}), 500
+    return jsonify({"message": f"Facture envoyee a {customer_email}"}), 200
 
 @app.route("/mirakl/poll", methods=["POST"])
 def mirakl_poll():
