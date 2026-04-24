@@ -3,19 +3,28 @@ import logging
 import datetime
 import os
 import json
+import base64
 import pickle
 import re
 import requests
+import tempfile
+from pathlib import Path
 from urllib.parse import quote
 import subprocess
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
+from sendgrid.helpers.mail import Attachment, FileContent, FileName, FileType, Disposition
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from googleapiclient.http import MediaFileUpload
+from invoice_template_en import invoice_from_shopify_payload, write_invoice_html, write_invoice_pdf
 
-# Permissions demandées : lecture + écriture sur Google Sheets
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+# Permissions demandées : lecture + écriture sur Google Sheets + upload Google Drive
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.file",
+]
 SERVICE_ACCOUNT_FILE = 'credentials.json'
 
 # Config
@@ -56,6 +65,7 @@ def log(msg):
     print(f"[LOG] {msg}", flush=True)
 
 app = Flask(__name__)
+GOOGLE_DRIVE_INVOICE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_INVOICE_FOLDER_ID", "1wVp1AdGQya1OPRgxuFUH0ocFmWWOY33G")
 
 # Configuration par produit (routing via SKU)
 PRODUCT_CONFIG = {
@@ -343,81 +353,134 @@ def _fmt_address_block(address):
 
 def send_invoice_email(invoice_data):
     try:
-        customer = invoice_data.get("customer", {}) if isinstance(invoice_data, dict) else {}
-        to_email = (customer.get("email") or invoice_data.get("email") or "").strip()
+        payload = invoice_data if isinstance(invoice_data, dict) else {}
+        order = payload.get("order", {}) if isinstance(payload.get("order"), dict) else payload
+        customer = order.get("customer", {}) if isinstance(order.get("customer"), dict) else {}
+        to_email = (customer.get("email") or order.get("email") or payload.get("email") or "").strip()
         if not to_email:
             return False, "Email client manquant"
 
-        currency = invoice_data.get("currency") or "EUR"
-        prices = invoice_data.get("prices", {}) if isinstance(invoice_data.get("prices"), dict) else {}
-        line_items = invoice_data.get("line_items", []) if isinstance(invoice_data.get("line_items"), list) else []
+        # Nom de fichier: INVOICE_CA_<name>.pdf (name issu du JSON Shopify)
+        raw_name = str(order.get("name") or payload.get("order_name") or payload.get("orderId") or "ORDER").strip()
+        safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_name).strip("_") or "ORDER"
+        invoice_filename_base = f"INVOICE_CA_{safe_name}"
+        pdf_filename = f"{invoice_filename_base}.pdf"
+        html_filename = f"{invoice_filename_base}.html"
 
-        line_items_text = []
-        for idx, item in enumerate(line_items, start=1):
-            line_items_text.append(
-                "\n".join([
-                    f"{idx}. {item.get('title') or '(sans titre)'}",
-                    f"   Variant: {item.get('variant_title') or '-'}",
-                    f"   SKU: {item.get('sku') or '-'}",
-                    f"   Product ID: {item.get('product_id') or '-'} | Variant ID: {item.get('variant_id') or '-'}",
-                    f"   Quantite: {item.get('quantity') or 0}",
-                    f"   Prix unitaire: {_fmt_money(item.get('price'))} {currency}",
-                    f"   Total ligne: {_fmt_money(item.get('total'))} {currency}",
-                ])
-            )
-        if not line_items_text:
-            line_items_text = ["Aucune ligne produit."]
-
-        order_name = invoice_data.get("order_name") or invoice_data.get("order_id") or "(sans numero)"
-        subject = f"Facture - commande {order_name}"
+        # Construire la facture via le template existant
+        invoice = invoice_from_shopify_payload(payload if isinstance(payload.get("order"), dict) else {"order": order})
+        subject = f"Invoice {raw_name}"
         body = "\n".join([
-            "Bonjour,",
+            "Hello,",
             "",
-            "Veuillez trouver ci-dessous les details de votre facture :",
+            "Please find your invoice attached to this email.",
             "",
-            f"Order ID: {invoice_data.get('order_id') or '-'}",
-            f"Order Name: {invoice_data.get('order_name') or '-'}",
-            f"Order Number: {invoice_data.get('order_number') or '-'}",
-            f"Date de creation: {invoice_data.get('created_at') or '-'}",
-            f"Statut financier: {invoice_data.get('financial_status') or '-'}",
+            f"Order: {raw_name}",
             "",
-            f"Sous-total: {_fmt_money(prices.get('subtotal'))} {currency}",
-            f"Livraison: {_fmt_money(prices.get('shipping'))} {currency}",
-            f"Taxes: {_fmt_money(prices.get('tax'))} {currency}",
-            f"Total: {_fmt_money(prices.get('total'))} {currency}",
-            "",
-            "Adresse de facturation:",
-            _fmt_address_block(invoice_data.get("billing_address")),
-            "",
-            "Adresse de livraison:",
-            _fmt_address_block(invoice_data.get("shipping_address")),
-            "",
-            "Client:",
-            f"ID: {customer.get('id') or '-'}",
-            f"Nom: {(customer.get('first_name') or '').strip()} {(customer.get('last_name') or '').strip()}".strip() or "-",
-            f"Email: {customer.get('email') or '-'}",
-            f"Telephone: {customer.get('phone') or '-'}",
-            "",
-            "Lignes de commande:",
-            "\n\n".join(line_items_text),
-            "",
-            "Merci pour votre commande.",
+            "Thank you for your order.",
             "Footbar",
         ])
 
-        message = Mail(
-            from_email=(FROM_EMAIL, "Footbar"),
-            to_emails=to_email,
-            subject=subject,
-            plain_text_content=body,
-        )
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
-        response = sg.send(message)
-        log(f"📨 Facture envoyée à {to_email} (SendGrid: {response.status_code})")
-        return response.status_code == 202, None
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            html_path = tmp_path / html_filename
+            pdf_path = tmp_path / pdf_filename
+            logo_path = Path("logo-footbar.png")
+
+            write_invoice_html(invoice, html_path, logo_path if logo_path.exists() else None)
+
+            attachment_path = html_path
+            attachment_filename = html_filename
+            attachment_mime = "text/html"
+            try:
+                chrome_candidates = [
+                    Path("/usr/bin/google-chrome"),
+                    Path("/usr/bin/google-chrome-stable"),
+                    Path("/usr/bin/chromium-browser"),
+                    Path("/usr/bin/chromium"),
+                    Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                ]
+                chrome_path = next((p for p in chrome_candidates if p.exists()), None)
+                if chrome_path:
+                    write_invoice_pdf(html_path, pdf_path, chrome_path=chrome_path)
+                    attachment_path = pdf_path
+                    attachment_filename = pdf_filename
+                    attachment_mime = "application/pdf"
+                else:
+                    log("⚠️ Chrome/Chromium introuvable: envoi facture en HTML joint")
+            except Exception as pdf_err:
+                log(f"⚠️ Génération PDF impossible ({pdf_err}), fallback HTML")
+
+            file_bytes = attachment_path.read_bytes()
+            attachment_b64 = base64.b64encode(file_bytes).decode("ascii")
+
+            message = Mail(
+                from_email=(FROM_EMAIL, "Footbar"),
+                to_emails=to_email,
+                subject=subject,
+                plain_text_content=body,
+            )
+            attachment = Attachment(
+                FileContent(attachment_b64),
+                FileName(attachment_filename),
+                FileType(attachment_mime),
+                Disposition("attachment"),
+            )
+            message.attachment = attachment
+
+            sg = SendGridAPIClient(SENDGRID_API_KEY)
+            response = sg.send(message)
+            log(f"📨 Facture envoyée à {to_email} (SendGrid: {response.status_code}, fichier: {attachment_filename})")
+            if response.status_code != 202:
+                return False, "Echec d'envoi de l'email facture"
+
+            # Archive dans Google Drive
+            try:
+                upload_invoice_to_drive(attachment_path, attachment_filename, attachment_mime)
+            except Exception as drive_err:
+                log(f"⚠️ Upload Drive échoué pour {attachment_filename}: {drive_err}")
+
+            return True, None
     except Exception as e:
         log(f"❌ Erreur envoi facture: {e}")
         return False, str(e)
+
+def upload_invoice_to_drive(file_path, file_name, mime_type):
+    drive = get_drive_service()
+    metadata = {
+        "name": file_name,
+        "parents": [GOOGLE_DRIVE_INVOICE_FOLDER_ID],
+    }
+    media = MediaFileUpload(str(file_path), mimetype=mime_type, resumable=False)
+    created = drive.files().create(
+        body=metadata,
+        media_body=media,
+        fields="id,name,webViewLink",
+        supportsAllDrives=True,
+    ).execute()
+    log(f"📁 Facture archivée Drive: {created.get('name')} ({created.get('id')})")
+    return created
+
+def get_drive_service():
+    creds_json_str = os.environ.get('GOOGLE_CREDENTIALS')
+    creds_file_path = os.environ.get('CREDENTIALS_FILE')
+    creds_info = None
+    if creds_json_str:
+        creds_info = json.loads(creds_json_str)
+    elif creds_file_path and os.path.exists(creds_file_path):
+        with open(creds_file_path, "r") as f:
+            creds_info = json.load(f)
+    elif os.path.exists("credentials.json"):
+        with open("credentials.json", "r") as f:
+            creds_info = json.load(f)
+    else:
+        raise RuntimeError("Aucun credentials Google trouvé pour Drive")
+
+    if isinstance(creds_info, dict) and creds_info.get("type") == "service_account":
+        from google.oauth2 import service_account
+        creds = service_account.Credentials.from_service_account_info(creds_info, scopes=SCOPES)
+        return build("drive", "v3", credentials=creds)
+    raise RuntimeError("Drive upload requiert un credentials de type service_account")
 
 def parse_iso8601(value):
     if not value:
@@ -1241,10 +1304,11 @@ def webhook_invoice():
         log(f"❌ Erreur lecture payload invoice: {e}")
         return jsonify({"error": str(e)}), 500
 
-    customer = data.get("customer", {}) if isinstance(data.get("customer"), dict) else {}
-    customer_email = (customer.get("email") or data.get("email") or "").strip()
+    order = data.get("order", {}) if isinstance(data.get("order"), dict) else {}
+    customer = order.get("customer", {}) if isinstance(order.get("customer"), dict) else {}
+    customer_email = (customer.get("email") or order.get("email") or data.get("email") or "").strip()
     if not customer_email:
-        return jsonify({"error": "Email client manquant dans customer.email"}), 400
+        return jsonify({"error": "Email client manquant dans order.customer.email"}), 400
     data["email"] = customer_email
 
     success, err = send_invoice_email(data)
