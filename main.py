@@ -15,10 +15,12 @@ from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from sendgrid.helpers.mail import Attachment, FileContent, FileName, FileType, Disposition
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
 from invoice_template_en import invoice_from_shopify_payload, write_invoice_html, write_invoice_pdf
+from xhtml2pdf import pisa
 
 # Permissions demandées : lecture + écriture sur Google Sheets + upload Google Drive
 SCOPES = [
@@ -65,7 +67,7 @@ def log(msg):
     print(f"[LOG] {msg}", flush=True)
 
 app = Flask(__name__)
-GOOGLE_DRIVE_INVOICE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_INVOICE_FOLDER_ID", "1wVp1AdGQya1OPRgxuFUH0ocFmWWOY33G")
+GOOGLE_DRIVE_INVOICE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_INVOICE_FOLDER_ID", "0AITaJhN2010sUk9PVA")
 
 # Configuration par produit (routing via SKU)
 PRODUCT_CONFIG = {
@@ -406,8 +408,18 @@ def send_invoice_email(invoice_data):
                     attachment_path = pdf_path
                     attachment_filename = pdf_filename
                     attachment_mime = "application/pdf"
+                    log("✅ Facture PDF générée via Chrome headless")
                 else:
-                    log("⚠️ Chrome/Chromium introuvable: envoi facture en HTML joint")
+                    # Fallback Python pur pour Render/systèmes sans Chrome
+                    with open(html_path, "r", encoding="utf-8") as html_file, open(pdf_path, "wb") as pdf_file:
+                        pdf_ok = pisa.CreatePDF(src=html_file.read(), dest=pdf_file)
+                    if not pdf_ok.err and pdf_path.exists():
+                        attachment_path = pdf_path
+                        attachment_filename = pdf_filename
+                        attachment_mime = "application/pdf"
+                        log("✅ Facture PDF générée via xhtml2pdf")
+                    else:
+                        log("⚠️ Génération PDF xhtml2pdf en échec: envoi facture en HTML joint")
             except Exception as pdf_err:
                 log(f"⚠️ Génération PDF impossible ({pdf_err}), fallback HTML")
 
@@ -446,22 +458,42 @@ def send_invoice_email(invoice_data):
         return False, str(e)
 
 def upload_invoice_to_drive(file_path, file_name, mime_type):
-    drive = get_drive_service()
+    drive = get_drive_service(prefer_oauth=False)
     metadata = {
         "name": file_name,
         "parents": [GOOGLE_DRIVE_INVOICE_FOLDER_ID],
     }
     media = MediaFileUpload(str(file_path), mimetype=mime_type, resumable=False)
-    created = drive.files().create(
-        body=metadata,
-        media_body=media,
-        fields="id,name,webViewLink",
-        supportsAllDrives=True,
-    ).execute()
-    log(f"📁 Facture archivée Drive: {created.get('name')} ({created.get('id')})")
-    return created
+    try:
+        created = drive.files().create(
+            body=metadata,
+            media_body=media,
+            fields="id,name,webViewLink",
+            supportsAllDrives=True,
+        ).execute()
+        log(f"📁 Facture archivée Drive: {created.get('name')} ({created.get('id')})")
+        return created
+    except HttpError as e:
+        # Cas connu: compte de service vers My Drive => quota inexistant
+        body = ""
+        try:
+            body = e.content.decode("utf-8", errors="ignore")
+        except Exception:
+            body = str(e)
+        if e.resp.status == 403 and "storageQuotaExceeded" in body:
+            log("⚠️ Drive quota service account: tentative fallback OAuth utilisateur")
+            drive_oauth = get_drive_service(prefer_oauth=True)
+            created = drive_oauth.files().create(
+                body=metadata,
+                media_body=media,
+                fields="id,name,webViewLink",
+                supportsAllDrives=True,
+            ).execute()
+            log(f"📁 Facture archivée Drive (OAuth): {created.get('name')} ({created.get('id')})")
+            return created
+        raise
 
-def get_drive_service():
+def _load_google_creds_info():
     creds_json_str = os.environ.get('GOOGLE_CREDENTIALS')
     creds_file_path = os.environ.get('CREDENTIALS_FILE')
     creds_info = None
@@ -475,12 +507,47 @@ def get_drive_service():
             creds_info = json.load(f)
     else:
         raise RuntimeError("Aucun credentials Google trouvé pour Drive")
+    return creds_info
+
+def _oauth_google_creds_from_client_config(creds_info):
+    creds = None
+    if os.path.exists("token.pickle"):
+        with open("token.pickle", "rb") as token:
+            try:
+                creds = pickle.load(token)
+            except Exception:
+                creds = None
+    if creds and getattr(creds, "valid", False):
+        return creds
+    if creds and getattr(creds, "expired", False) and getattr(creds, "refresh_token", None):
+        creds.refresh(Request())
+        with open("token.pickle", "wb") as token_out:
+            pickle.dump(creds, token_out)
+        return creds
+    # En serveur, on ne peut pas lancer un flow interactif
+    raise RuntimeError(
+        "OAuth Drive indisponible: token.pickle manquant/invalide. "
+        "Crée d'abord token.pickle en local ou utilise un Shared Drive avec service account."
+    )
+
+def get_drive_service(prefer_oauth=False):
+    creds_info = _load_google_creds_info()
+    creds_type = creds_info.get("type") if isinstance(creds_info, dict) else None
+
+    if prefer_oauth:
+        if creds_type in {"installed", "web"}:
+            creds = _oauth_google_creds_from_client_config(creds_info)
+            return build("drive", "v3", credentials=creds)
+        raise RuntimeError("Fallback OAuth demandé mais credentials OAuth (installed/web) absents.")
 
     if isinstance(creds_info, dict) and creds_info.get("type") == "service_account":
         from google.oauth2 import service_account
         creds = service_account.Credentials.from_service_account_info(creds_info, scopes=SCOPES)
         return build("drive", "v3", credentials=creds)
-    raise RuntimeError("Drive upload requiert un credentials de type service_account")
+    if creds_type in {"installed", "web"}:
+        creds = _oauth_google_creds_from_client_config(creds_info)
+        return build("drive", "v3", credentials=creds)
+    raise RuntimeError("Type de credentials Google non supporté pour Drive")
 
 def parse_iso8601(value):
     if not value:
