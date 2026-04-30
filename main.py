@@ -31,7 +31,7 @@ SERVICE_ACCOUNT_FILE = 'credentials.json'
 
 # Config
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
-CR7M_EMAIL_ID = os.environ.get("CR7M_EMAIL_ID", "6")
+CR7M_EMAIL_ID = os.environ.get("CR7M_EMAIL_ID", "9")
 FROM_EMAIL = "help@footbar.com"  # adresse expéditrice
 CR7M_BASE_URL = os.environ.get("CR7M_BASE_URL", "https://cr7m.footbar.com")
 CR7M_API_TOKEN = os.environ.get("CR7M_API_TOKEN")
