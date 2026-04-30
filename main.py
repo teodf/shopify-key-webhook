@@ -31,9 +31,10 @@ SERVICE_ACCOUNT_FILE = 'credentials.json'
 
 # Config
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
-TEMPLATE_ID_FR = "d-da4295a9f558493a8b6988af60e501de"  # Français
-TEMPLATE_ID_EN = "d-0314abc9f83a4ab3bc9c3068b9b0e2a1"  # Anglais
+CR7M_EMAIL_ID = os.environ.get("CR7M_EMAIL_ID", "6")
 FROM_EMAIL = "help@footbar.com"  # adresse expéditrice
+CR7M_BASE_URL = os.environ.get("CR7M_BASE_URL", "https://cr7mtest.footbar.com")
+CR7M_API_TOKEN = os.environ.get("CR7M_API_TOKEN")
 
 # Mirakl Décathlon
 MIRAKL_API_BASE_URL = os.environ.get("MIRAKL_API_BASE_URL", "https://marketplace-decathlon-eu.mirakl.net")
@@ -297,38 +298,67 @@ Footbar"""
 
 
 # 📩 Fonction d'envoi d'email
-def send_email_with_template(to_email, licence_key, language_code, template_fr_override=None, template_en_override=None, order_id=None):
+def send_email_with_template(to_email, licence_key, language_code, template_fr_override=None, template_en_override=None, order_id=None, first_name="", last_name=""):
     try:
         log(f"📤 Envoi email à {to_email} avec clé {licence_key} en langue {language_code}")
 
-        # Choix du template en fonction de la langue
-        if language_code and language_code.lower().startswith("fr"):
-            template_id = template_fr_override if template_fr_override and template_fr_override != "A DEFINIR" else TEMPLATE_ID_FR
-        else:
-            template_id = template_en_override if template_en_override and template_en_override != "A DEFINIR" else TEMPLATE_ID_EN
+        # CR7M: email_id numérique unique; la langue est portée par contact.language.
+        candidate_template_ids = [
+            template_fr_override,
+            template_en_override,
+            CR7M_EMAIL_ID,
+        ]
+        template_id = None
+        for candidate in candidate_template_ids:
+            value = str(candidate or "").strip()
+            if value.isdigit():
+                template_id = int(value)
+                break
+        if template_id is None:
+            log("❌ Aucun email_id CR7M numérique trouvé (config produit + CR7M_EMAIL_ID)")
+            return False
 
-        message = Mail(
-            from_email=(FROM_EMAIL, "Footbar"),
-            to_emails=to_email
-        )
-        # Construire les données du template
-        template_data = {
-            "licence_key": licence_key
+        if not CR7M_API_TOKEN:
+            log("❌ CR7M_API_TOKEN manquant")
+            return False
+
+        language = "fr" if language_code and language_code.lower().startswith("fr") else "en"
+        contact_first_name = (first_name or "").strip()
+        if not contact_first_name and to_email and "@" in to_email:
+            contact_first_name = to_email.split("@", 1)[0][:80]
+        payload = {
+            "email_id": template_id,
+            "email": to_email,
+            "contact": {
+                "first_name": contact_first_name,
+                "last_name": (last_name or "").strip(),
+                "language": language,
+            },
+            "tokens": {
+                "{licence_key}": licence_key,
+                "{licence_link}": f"https://footbar.app.link/activateKey?key={licence_key}",
+            }
         }
-        # Ajouter le numéro de commande si fourni (pour Amazon)
         if order_id:
-            template_data["order_id"] = order_id
-        message.dynamic_template_data = template_data
-        message.template_id = template_id
+            payload["tokens"]["{order_id}"] = order_id
 
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
-        response = sg.send(message)
-        log(f"📨 Réponse SendGrid: {response.status_code}")
-        log(f"📨 Headers: {response.headers}")
-        return response.status_code == 202
+        endpoint = f"{CR7M_BASE_URL.rstrip('/')}/mautic/send-email/"
+        response = requests.post(
+            endpoint,
+            headers={
+                "Authorization": f"Token {CR7M_API_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=20,
+        )
+        log(f"📨 Réponse CR7M: {response.status_code}")
+        if response.status_code >= 400:
+            log(f"📨 Body CR7M: {response.text[:1000]}")
+        return 200 <= response.status_code < 300
 
     except Exception as e:
-        log(f"❌ Erreur SendGrid : {e}")
+        log(f"❌ Erreur CR7M : {e}")
         return False
 
 def _fmt_money(value):
@@ -709,7 +739,7 @@ def process_order(customer_email, language_email, line_items, order_id=None):
             if not key:
                 return {"error": f"Aucune clé disponible pour {sku}"}, 500
 
-            # Toujours utiliser le template SendGrid (y compris pour Amazon/Mirakl avec order_id)
+            # Envoi via CR7M (y compris pour Mirakl avec order_id)
             email_sent = send_email_with_template(
                 customer_email,
                 key,
