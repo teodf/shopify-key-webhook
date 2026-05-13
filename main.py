@@ -467,6 +467,12 @@ def send_invoice_email(invoice_data):
             file_bytes = attachment_path.read_bytes()
             attachment_b64 = base64.b64encode(file_bytes).decode("ascii")
 
+            # Archive Drive indépendante du succès d'envoi email
+            try:
+                upload_invoice_to_drive(attachment_path, attachment_filename, attachment_mime)
+            except Exception as drive_err:
+                log(f"⚠️ Upload Drive échoué pour {attachment_filename}: {drive_err}")
+
             message = Mail(
                 from_email=(FROM_EMAIL, "Footbar"),
                 to_emails=to_email,
@@ -486,12 +492,6 @@ def send_invoice_email(invoice_data):
             log(f"📨 Facture envoyée à {to_email} (SendGrid: {response.status_code}, fichier: {attachment_filename})")
             if response.status_code != 202:
                 return False, "Echec d'envoi de l'email facture"
-
-            # Archive dans Google Drive
-            try:
-                upload_invoice_to_drive(attachment_path, attachment_filename, attachment_mime)
-            except Exception as drive_err:
-                log(f"⚠️ Upload Drive échoué pour {attachment_filename}: {drive_err}")
 
             return True, None
     except Exception as e:
