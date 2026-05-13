@@ -20,7 +20,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
 from invoice_template_en import invoice_from_shopify_payload, write_invoice_html, write_invoice_pdf
-from xhtml2pdf import pisa
+try:
+    from xhtml2pdf import pisa
+except ImportError:
+    pisa = None
 
 # Permissions demandées : lecture + écriture sur Google Sheets + upload Google Drive
 SCOPES = [
@@ -444,17 +447,20 @@ def send_invoice_email(invoice_data):
                     attachment_mime = "application/pdf"
                     log(f"✅ Facture PDF générée via Chrome headless ({chrome_path})")
                 else:
-                    log("⚠️ Aucun binaire Chrome/Chromium détecté, tentative xhtml2pdf")
-                    # Fallback Python pur pour Render/systèmes sans Chrome
-                    with open(html_path, "r", encoding="utf-8") as html_file, open(pdf_path, "wb") as pdf_file:
-                        pdf_ok = pisa.CreatePDF(src=html_file.read(), dest=pdf_file)
-                    if not pdf_ok.err and pdf_path.exists():
-                        attachment_path = pdf_path
-                        attachment_filename = pdf_filename
-                        attachment_mime = "application/pdf"
-                        log("✅ Facture PDF générée via xhtml2pdf")
+                    log("⚠️ Aucun binaire Chrome/Chromium détecté")
+                    if pisa is not None:
+                        # Fallback Python pur si xhtml2pdf est installé
+                        with open(html_path, "r", encoding="utf-8") as html_file, open(pdf_path, "wb") as pdf_file:
+                            pdf_ok = pisa.CreatePDF(src=html_file.read(), dest=pdf_file)
+                        if not pdf_ok.err and pdf_path.exists():
+                            attachment_path = pdf_path
+                            attachment_filename = pdf_filename
+                            attachment_mime = "application/pdf"
+                            log("✅ Facture PDF générée via xhtml2pdf")
+                        else:
+                            log("⚠️ Génération PDF xhtml2pdf en échec: envoi facture en HTML joint")
                     else:
-                        log("⚠️ Génération PDF xhtml2pdf en échec: envoi facture en HTML joint")
+                        log("⚠️ xhtml2pdf non installé: envoi facture en HTML joint")
             except Exception as pdf_err:
                 log(f"⚠️ Génération PDF impossible ({pdf_err!r}), fallback HTML")
 
