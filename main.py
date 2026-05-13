@@ -425,21 +425,26 @@ def send_invoice_email(invoice_data):
             attachment_filename = html_filename
             attachment_mime = "text/html"
             try:
-                chrome_candidates = [
+                env_chrome = os.environ.get("CHROME_BIN") or os.environ.get("GOOGLE_CHROME_BIN")
+                chrome_candidates = []
+                if env_chrome:
+                    chrome_candidates.append(Path(env_chrome))
+                chrome_candidates.extend([
                     Path("/usr/bin/google-chrome"),
                     Path("/usr/bin/google-chrome-stable"),
                     Path("/usr/bin/chromium-browser"),
                     Path("/usr/bin/chromium"),
                     Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-                ]
+                ])
                 chrome_path = next((p for p in chrome_candidates if p.exists()), None)
                 if chrome_path:
                     write_invoice_pdf(html_path, pdf_path, chrome_path=chrome_path)
                     attachment_path = pdf_path
                     attachment_filename = pdf_filename
                     attachment_mime = "application/pdf"
-                    log("✅ Facture PDF générée via Chrome headless")
+                    log(f"✅ Facture PDF générée via Chrome headless ({chrome_path})")
                 else:
+                    log("⚠️ Aucun binaire Chrome/Chromium détecté, tentative xhtml2pdf")
                     # Fallback Python pur pour Render/systèmes sans Chrome
                     with open(html_path, "r", encoding="utf-8") as html_file, open(pdf_path, "wb") as pdf_file:
                         pdf_ok = pisa.CreatePDF(src=html_file.read(), dest=pdf_file)
@@ -451,7 +456,7 @@ def send_invoice_email(invoice_data):
                     else:
                         log("⚠️ Génération PDF xhtml2pdf en échec: envoi facture en HTML joint")
             except Exception as pdf_err:
-                log(f"⚠️ Génération PDF impossible ({pdf_err}), fallback HTML")
+                log(f"⚠️ Génération PDF impossible ({pdf_err!r}), fallback HTML")
 
             file_bytes = attachment_path.read_bytes()
             attachment_b64 = base64.b64encode(file_bytes).decode("ascii")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -896,8 +897,16 @@ def write_invoice_html(
 def write_invoice_pdf(
     html_path: Path,
     pdf_path: Path,
-    chrome_path: Path = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    chrome_path: Path | None = None,
 ) -> None:
+    if chrome_path is None:
+        env_chrome = os.environ.get("CHROME_BIN") or os.environ.get("GOOGLE_CHROME_BIN")
+        chrome_path = (
+            Path(env_chrome)
+            if env_chrome
+            else Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        )
+
     if not chrome_path.exists():
         raise FileNotFoundError(
             f"Chrome executable not found at {chrome_path}. "
@@ -905,20 +914,25 @@ def write_invoice_pdf(
         )
 
     html_uri = html_path.resolve().as_uri()
-    subprocess.run(
-        [
-            str(chrome_path),
-            "--headless",
-            "--disable-gpu",
-            "--no-sandbox",
-            "--no-pdf-header-footer",
-            f"--print-to-pdf={pdf_path.resolve()}",
-            html_uri,
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        subprocess.run(
+            [
+                str(chrome_path),
+                "--headless",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+                "--no-pdf-header-footer",
+                f"--print-to-pdf={pdf_path.resolve()}",
+                html_uri,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        details = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise RuntimeError(f"Chrome PDF rendering failed: {details}") from exc
 
 
 def main() -> None:
