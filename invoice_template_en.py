@@ -147,6 +147,8 @@ def default_seller() -> Party:
     return Party(
         name="CAPTEUR 4L",
         address_lines=["3340 Rue Avon", "Saint-Hubert", "J3Y 5A8", "Canada"],
+        vat_id="711327965RT0001",
+        company_id="1233438436TQ0001",
     )
 
 
@@ -514,8 +516,10 @@ def render_party(party: Party, include_ids: bool = False) -> str:
         parts.append(escape(party.email))
     if party.phone:
         parts.append(escape(party.phone))
+    if include_ids and party.vat_id:
+        parts.append(f"GST/HST number: {escape(party.vat_id)}")
     if include_ids and party.company_id:
-        parts.append(f"Company ID: {escape(party.company_id)}")
+        parts.append(f"TVQ/QST number: {escape(party.company_id)}")
     return "<p>" + "</p><p>".join(parts) + "</p>"
 
 
