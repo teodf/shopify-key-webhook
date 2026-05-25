@@ -14,6 +14,7 @@ from google.oauth2 import service_account
 ANDROID_PUBLISHER_SCOPE = "https://www.googleapis.com/auth/androidpublisher"
 GOOGLE_PLAY_REVIEWS_URL = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{package_name}/reviews"
 APP_STORE_CONNECT_BASE_URL = "https://api.appstoreconnect.apple.com/v1"
+APP_STORE_LOOKUP_URL = "https://itunes.apple.com/lookup"
 
 bp = Blueprint("store_reviews", __name__, url_prefix="/store-reviews")
 
@@ -85,6 +86,21 @@ def _average_rating(reviews):
     if not ratings:
         return None
     return round(sum(ratings) / len(ratings), 2)
+
+
+def _weighted_average_rating(summaries):
+    weighted_sum = 0
+    rating_count = 0
+    for summary in summaries:
+        average = summary.get("average_rating")
+        count = summary.get("rating_count")
+        if average is None or not count:
+            continue
+        weighted_sum += average * count
+        rating_count += count
+    if not rating_count:
+        return None
+    return round(weighted_sum / rating_count, 2)
 
 
 def _sort_key(review):
@@ -276,6 +292,29 @@ def list_app_store_apps():
     return _app_store_get("/apps", params=params)
 
 
+def fetch_app_store_public_rating(app_id):
+    country = _env("APP_STORE_LOOKUP_COUNTRY") or (_env("APP_STORE_TERRITORY") or "").lower()
+    params = {"id": app_id}
+    if country:
+        params["country"] = country.lower()
+
+    response = requests.get(APP_STORE_LOOKUP_URL, params=params, timeout=30)
+    _raise_for_provider(response, "App Store Lookup")
+    results = response.json().get("results", [])
+    if not results:
+        return None
+
+    app = results[0]
+    return {
+        "average_rating": app.get("averageUserRating"),
+        "rating_count": app.get("userRatingCount"),
+        "average_rating_current_version": app.get("averageUserRatingForCurrentVersion"),
+        "rating_count_current_version": app.get("userRatingCountForCurrentVersion"),
+        "country": country or app.get("country"),
+        "track_view_url": app.get("trackViewUrl"),
+    }
+
+
 def fetch_app_store_reviews():
     app_id = _env("APP_STORE_APP_ID")
     if not app_id:
@@ -309,12 +348,17 @@ def fetch_app_store_reviews():
 
     if max_reviews is not None:
         reviews = reviews[:max_reviews]
+    public_rating = fetch_app_store_public_rating(app_id)
+    review_average_rating = _average_rating(reviews)
     return {
         "status": "ok",
         "app_id": app_id,
         "territory": territory,
         "review_count": len(reviews),
-        "average_rating": _average_rating(reviews),
+        "average_rating": public_rating.get("average_rating") if public_rating else review_average_rating,
+        "rating_count": public_rating.get("rating_count") if public_rating else None,
+        "public_rating": public_rating,
+        "review_average_rating": review_average_rating,
         "reviews": reviews,
     }
 
@@ -349,7 +393,8 @@ def sync_store_reviews():
         "source": "app_stores",
         "synced_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "review_count": len(combined_reviews),
-        "average_rating": _average_rating(combined_reviews),
+        "average_rating": _weighted_average_rating(sources.values()) or _average_rating(combined_reviews),
+        "review_average_rating": _average_rating(combined_reviews),
         "sources": sources,
         "reviews": combined_reviews,
     }
