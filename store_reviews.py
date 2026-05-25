@@ -36,7 +36,10 @@ def _reviews_output_path():
 def _max_reviews(provider_name):
     specific = _env(f"{provider_name}_MAX_REVIEWS")
     generic = _env("APP_REVIEWS_MAX_REVIEWS", "50")
-    return max(1, int(specific or generic))
+    raw_value = (specific or generic or "").lower()
+    if raw_value in {"0", "all", "none", "unlimited"}:
+        return None
+    return max(1, int(raw_value))
 
 
 def _admin_authorized():
@@ -156,8 +159,9 @@ def fetch_google_play_reviews():
     page_token = None
     url = GOOGLE_PLAY_REVIEWS_URL.format(package_name=quote(package_name, safe=""))
 
-    while len(reviews) < max_reviews:
-        params = {"maxResults": min(100, max_reviews - len(reviews))}
+    while max_reviews is None or len(reviews) < max_reviews:
+        page_size = 100 if max_reviews is None else min(100, max_reviews - len(reviews))
+        params = {"maxResults": page_size}
         translation_language = _env("GOOGLE_PLAY_TRANSLATION_LANGUAGE")
         if translation_language:
             params["translationLanguage"] = translation_language
@@ -177,7 +181,8 @@ def fetch_google_play_reviews():
         if not page_token:
             break
 
-    reviews = reviews[:max_reviews]
+    if max_reviews is not None:
+        reviews = reviews[:max_reviews]
     return {
         "status": "ok",
         "package_name": package_name,
@@ -280,7 +285,7 @@ def fetch_app_store_reviews():
     reviews = []
     next_url = None
     params = {
-        "limit": min(200, max_reviews),
+        "limit": 200 if max_reviews is None else min(200, max_reviews),
         "sort": "-createdDate",
         "include": "response",
         "fields[customerReviews]": "rating,title,body,reviewerNickname,createdDate,territory,response",
@@ -290,7 +295,7 @@ def fetch_app_store_reviews():
     if territory:
         params["filter[territory]"] = territory
 
-    while len(reviews) < max_reviews:
+    while max_reviews is None or len(reviews) < max_reviews:
         payload = _app_store_get(next_url or f"/apps/{app_id}/customerReviews", params=params if not next_url else None)
         responses_by_id = {
             item.get("id"): item
@@ -302,7 +307,8 @@ def fetch_app_store_reviews():
         if not next_url:
             break
 
-    reviews = reviews[:max_reviews]
+    if max_reviews is not None:
+        reviews = reviews[:max_reviews]
     return {
         "status": "ok",
         "app_id": app_id,
@@ -379,4 +385,3 @@ def app_store_apps_route():
     if admin_error:
         return admin_error
     return jsonify(list_app_store_apps())
-
