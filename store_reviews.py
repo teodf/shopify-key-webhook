@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import jwt
+import pycountry
 import requests
 from flask import Blueprint, Response, jsonify, request
 from google.auth.transport.requests import Request as GoogleAuthRequest
@@ -86,6 +87,24 @@ def _average_rating(reviews):
     if not ratings:
         return None
     return round(sum(ratings) / len(ratings), 2)
+
+
+def _weighted_average_from_rating_items(items):
+    weighted_sum = 0
+    rating_count = 0
+    for item in items:
+        average = item.get("average_rating")
+        count = item.get("rating_count")
+        if average is None or not count:
+            continue
+        weighted_sum += average * count
+        rating_count += count
+    if not rating_count:
+        return None
+    return {
+        "average_rating": round(weighted_sum / rating_count, 6),
+        "rating_count": rating_count,
+    }
 
 
 def _weighted_average_rating(summaries):
@@ -293,7 +312,83 @@ def list_app_store_apps():
 
 
 def fetch_app_store_public_rating(app_id):
-    country = _env("APP_STORE_LOOKUP_COUNTRY") or (_env("APP_STORE_TERRITORY") or "").lower()
+    country = _env("APP_STORE_LOOKUP_COUNTRY")
+    if country:
+        return _fetch_app_store_public_rating_for_country(app_id, country.lower())
+
+    countries = fetch_app_store_available_lookup_countries(app_id)
+    country_ratings = [
+        _fetch_app_store_public_rating_for_country(app_id, country)
+        for country in countries
+    ]
+    country_ratings = [rating for rating in country_ratings if rating]
+    aggregate = _weighted_average_from_rating_items(country_ratings)
+    if not aggregate:
+        return None
+    return {
+        **aggregate,
+        "mode": "available_territories_aggregate",
+        "country_count": len(country_ratings),
+        "countries": country_ratings,
+    }
+
+
+def _territory_code_to_lookup_country(territory_code):
+    code = (territory_code or "").strip()
+    if not code:
+        return None
+    if len(code) == 2:
+        return code.lower()
+
+    aliases = {
+        "ANT": "an",
+        "XKX": "xk",
+    }
+    if code.upper() in aliases:
+        return aliases[code.upper()]
+
+    country = pycountry.countries.get(alpha_3=code.upper())
+    return country.alpha_2.lower() if country else None
+
+
+def fetch_app_store_available_lookup_countries(app_id):
+    countries = []
+    seen = set()
+    next_url = None
+    params = {
+        "include": "territoryAvailabilities",
+        "limit[territoryAvailabilities]": 200,
+    }
+
+    while True:
+        payload = _app_store_get(
+            next_url or f"/apps/{app_id}/appAvailabilityV2",
+            params=params if not next_url else None,
+        )
+        for item in payload.get("included", []):
+            if "territory" not in (item.get("type") or "").lower():
+                continue
+
+            attributes = item.get("attributes") or {}
+            raw_code = (
+                attributes.get("territory")
+                or attributes.get("territoryCode")
+                or attributes.get("countryCode")
+                or item.get("id")
+            )
+            country = _territory_code_to_lookup_country(raw_code)
+            if country and country not in seen:
+                seen.add(country)
+                countries.append(country)
+
+        next_url = (payload.get("links") or {}).get("next")
+        if not next_url:
+            break
+
+    return countries
+
+
+def _fetch_app_store_public_rating_for_country(app_id, country):
     params = {"id": app_id}
     if country:
         params["country"] = country.lower()
@@ -310,7 +405,7 @@ def fetch_app_store_public_rating(app_id):
         "rating_count": app.get("userRatingCount"),
         "average_rating_current_version": app.get("averageUserRatingForCurrentVersion"),
         "rating_count_current_version": app.get("userRatingCountForCurrentVersion"),
-        "country": country or app.get("country"),
+        "country": country,
         "track_view_url": app.get("trackViewUrl"),
     }
 

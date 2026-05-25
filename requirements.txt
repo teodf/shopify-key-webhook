@@ -7,3 +7,4 @@ google-auth-oauthlib
 requests
 awscurl
 PyJWT[crypto]
+pycountry
