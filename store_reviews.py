@@ -357,7 +357,7 @@ def fetch_app_store_available_lookup_countries(app_id):
     next_url = None
     params = {
         "include": "territoryAvailabilities",
-        "limit[territoryAvailabilities]": 200,
+        "limit[territoryAvailabilities]": 50,
     }
 
     while True:
