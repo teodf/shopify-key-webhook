@@ -16,6 +16,11 @@ ANDROID_PUBLISHER_SCOPE = "https://www.googleapis.com/auth/androidpublisher"
 GOOGLE_PLAY_REVIEWS_URL = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{package_name}/reviews"
 APP_STORE_CONNECT_BASE_URL = "https://api.appstoreconnect.apple.com/v1"
 APP_STORE_LOOKUP_URL = "https://itunes.apple.com/lookup"
+APP_STORE_DEFAULT_LOOKUP_COUNTRIES = [
+    "fr", "us", "gb", "de", "es", "it", "nl", "pt", "be", "ch",
+    "ca", "au", "at", "ie", "lu", "se", "no", "dk", "fi", "pl",
+    "cz", "ro", "hu", "tr", "br", "mx", "jp", "kr",
+]
 
 bp = Blueprint("store_reviews", __name__, url_prefix="/store-reviews")
 
@@ -316,7 +321,16 @@ def fetch_app_store_public_rating(app_id):
     if country:
         return _fetch_app_store_public_rating_for_country(app_id, country.lower())
 
-    countries = fetch_app_store_available_lookup_countries(app_id)
+    mode = "available_territories_aggregate"
+    try:
+        countries = fetch_app_store_available_lookup_countries(app_id)
+    except Exception:
+        countries = []
+
+    if not countries:
+        countries = APP_STORE_DEFAULT_LOOKUP_COUNTRIES
+        mode = "default_country_aggregate"
+
     country_ratings = [
         _fetch_app_store_public_rating_for_country(app_id, country)
         for country in countries
@@ -327,7 +341,7 @@ def fetch_app_store_public_rating(app_id):
         return None
     return {
         **aggregate,
-        "mode": "available_territories_aggregate",
+        "mode": mode,
         "country_count": len(country_ratings),
         "countries": country_ratings,
     }
