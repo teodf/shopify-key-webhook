@@ -131,6 +131,69 @@ def _sort_key(review):
     return review.get("update_time") or review.get("create_time") or ""
 
 
+def _review_dedupe_key(review):
+    review_id = review.get("id")
+    if review_id:
+        return f"id:{review_id}"
+    return "|".join(
+        str(review.get(key) or "").strip().lower()
+        for key in ["source", "rating", "comment", "author", "create_time", "update_time"]
+    )
+
+
+def _load_existing_reviews_payload():
+    output_path = _reviews_output_path()
+    if not output_path.exists():
+        return None
+    try:
+        with output_path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _merge_review_lists(existing_reviews, fresh_reviews):
+    merged = []
+    seen = set()
+    for review in [*(fresh_reviews or []), *(existing_reviews or [])]:
+        dedupe_key = _review_dedupe_key(review)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        merged.append(review)
+    merged.sort(key=_sort_key, reverse=True)
+    return merged
+
+
+def _merge_google_play_source(existing_payload, fresh_source):
+    if not isinstance(existing_payload, dict):
+        return fresh_source
+
+    existing_source = (existing_payload.get("sources") or {}).get("google_play") or {}
+    existing_reviews = existing_source.get("reviews") or []
+    fresh_reviews = fresh_source.get("reviews") or []
+    if not existing_reviews:
+        return fresh_source
+
+    merged_reviews = _merge_review_lists(existing_reviews, fresh_reviews)
+    merged_source = {
+        **existing_source,
+        **fresh_source,
+        "status": fresh_source.get("status") or existing_source.get("status"),
+        "reviews": merged_reviews,
+        "review_count": len(merged_reviews),
+        "average_rating": _average_rating(merged_reviews),
+        "review_average_rating": _average_rating(merged_reviews),
+        "preserved_existing_reviews": len(existing_reviews),
+        "fresh_reviews": len(fresh_reviews),
+    }
+    if existing_source.get("import_mode") and not fresh_source.get("import_mode"):
+        merged_source["import_mode"] = existing_source["import_mode"]
+    if existing_source.get("rating_count") and not fresh_source.get("rating_count"):
+        merged_source["rating_count"] = existing_source["rating_count"]
+    return merged_source
+
+
 def _google_play_service_account_info():
     raw_json = _env("GOOGLE_PLAY_SERVICE_ACCOUNT_JSON")
     if raw_json:
@@ -484,15 +547,31 @@ def _safe_fetch(provider_name, fetcher):
 def _save_reviews_payload(payload):
     output_path = _reviews_output_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as f:
+    tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=True, indent=2)
+    tmp_path.replace(output_path)
+
+
+def _validate_upload_payload(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("Le JSON doit etre un objet.")
+    if payload.get("source") != "app_stores":
+        raise ValueError("Le champ source doit etre 'app_stores'.")
+    if not isinstance(payload.get("sources"), dict):
+        raise ValueError("Le champ sources doit etre un objet.")
+    if not isinstance(payload.get("reviews"), list):
+        raise ValueError("Le champ reviews doit etre une liste.")
 
 
 def sync_store_reviews():
+    existing_payload = _load_existing_reviews_payload()
     sources = {
         "google_play": _safe_fetch("google_play", fetch_google_play_reviews),
         "app_store": _safe_fetch("app_store", fetch_app_store_reviews),
     }
+    sources["google_play"] = _merge_google_play_source(existing_payload, sources["google_play"])
+
     combined_reviews = []
     for source in sources.values():
         combined_reviews.extend(source.get("reviews", []))
@@ -517,6 +596,38 @@ def sync_reviews_route():
     if admin_error:
         return admin_error
     return jsonify(sync_store_reviews())
+
+
+@bp.route("/upload", methods=["POST"])
+def upload_reviews_json():
+    admin_error = _require_admin()
+    if admin_error:
+        return admin_error
+
+    uploaded_file = request.files.get("file")
+    if uploaded_file:
+        raw_payload = uploaded_file.read().decode("utf-8")
+    else:
+        raw_payload = request.get_data(as_text=True)
+
+    if not raw_payload.strip():
+        return jsonify({"error": "Fichier JSON manquant."}), 400
+
+    try:
+        payload = json.loads(raw_payload)
+        _validate_upload_payload(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        return jsonify({"error": f"JSON stores invalide: {exc}"}), 400
+
+    _save_reviews_payload(payload)
+    return jsonify({
+        "status": "ok",
+        "output": str(_reviews_output_path()),
+        "review_count": len(payload["reviews"]),
+        "average_rating": payload.get("average_rating"),
+        "google_play_review_count": len((payload.get("sources", {}).get("google_play") or {}).get("reviews", [])),
+        "app_store_review_count": len((payload.get("sources", {}).get("app_store") or {}).get("reviews", [])),
+    })
 
 
 @bp.route("/reviews.json", methods=["GET", "OPTIONS"])
