@@ -22,6 +22,7 @@ from googleapiclient.http import MediaFileUpload
 from invoice_template_en import invoice_from_shopify_payload, write_invoice_html, write_invoice_pdf
 from google_business_reviews import bp as google_business_reviews_bp
 from store_reviews import bp as store_reviews_bp
+from decathlon_reviews import bp as decathlon_reviews_bp
 
 # Permissions demandées : lecture + écriture sur Google Sheets + upload Google Drive
 SCOPES = [
@@ -71,6 +72,7 @@ def log(msg):
 app = Flask(__name__)
 app.register_blueprint(google_business_reviews_bp)
 app.register_blueprint(store_reviews_bp)
+app.register_blueprint(decathlon_reviews_bp)
 GOOGLE_DRIVE_INVOICE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_INVOICE_FOLDER_ID", "1bnXRpUh6Du2ofq_WNTEtWvrrIh1e-xQf")
 
 # Configuration par produit (routing via SKU)
