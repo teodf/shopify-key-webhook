@@ -3,7 +3,6 @@ import logging
 import datetime
 import os
 import json
-import base64
 import pickle
 import re
 import requests
@@ -11,9 +10,6 @@ import tempfile
 from pathlib import Path
 from urllib.parse import quote
 import subprocess
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
-from sendgrid.helpers.mail import Attachment, FileContent, FileName, FileType, Disposition
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -33,9 +29,9 @@ SCOPES = [
 SERVICE_ACCOUNT_FILE = 'credentials.json'
 
 # Config
-SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
 CR7M_EMAIL_ID = os.environ.get("CR7M_EMAIL_ID", "9")
-FROM_EMAIL = "help@footbar.com"  # adresse expéditrice
+CR7M_INVOICE_EMAIL_ID_FR = os.environ.get("CR7M_INVOICE_EMAIL_ID_FR", "34")
+CR7M_INVOICE_EMAIL_ID_EN = os.environ.get("CR7M_INVOICE_EMAIL_ID_EN", "33")
 CR7M_BASE_URL = os.environ.get("CR7M_BASE_URL", "https://cr7m.footbar.com")
 CR7M_API_TOKEN = os.environ.get("CR7M_API_TOKEN")
 
@@ -390,6 +386,37 @@ def _fmt_address_block(address):
     clean = [line for line in lines if line]
     return "\n".join(clean) if clean else "(non renseignée)"
 
+def _invoice_language_code(payload, order, customer):
+    candidates = [
+        payload.get("language"),
+        payload.get("locale"),
+        order.get("customer_locale"),
+        order.get("locale"),
+        customer.get("locale"),
+        customer.get("language"),
+    ]
+    for candidate in candidates:
+        value = str(candidate or "").strip().lower()
+        if value:
+            return "fr" if value.startswith("fr") else "en"
+
+    address = order.get("shipping_address") or order.get("billing_address") or {}
+    country = str(address.get("country_code") or address.get("country") or "").strip().lower()
+    if country in {"fr", "france", "be", "belgium", "belgique"}:
+        return "fr"
+    return "en"
+
+def _invoice_template_id(payload, language_code):
+    direct_id = str(payload.get("email_id") or "").strip()
+    if direct_id:
+        return direct_id
+
+    if language_code == "fr":
+        candidate = str(payload.get("email_id_fr") or CR7M_INVOICE_EMAIL_ID_FR or CR7M_INVOICE_EMAIL_ID or "").strip()
+    else:
+        candidate = str(payload.get("email_id_en") or CR7M_INVOICE_EMAIL_ID_EN or CR7M_INVOICE_EMAIL_ID or "").strip()
+    return candidate
+
 def send_invoice_email(invoice_data):
     try:
         payload = invoice_data if isinstance(invoice_data, dict) else {}
@@ -398,6 +425,13 @@ def send_invoice_email(invoice_data):
         to_email = (customer.get("email") or order.get("email") or payload.get("email") or "").strip()
         if not to_email:
             return False, "Email client manquant"
+        if not CR7M_API_TOKEN:
+            return False, "CR7M_API_TOKEN manquant"
+
+        language_code = _invoice_language_code(payload, order, customer)
+        invoice_email_id = _invoice_template_id(payload, language_code)
+        if not invoice_email_id.isdigit():
+            return False, "email_id facture CR7M invalide"
 
         # Nom de fichier: INVOICE_CA_<name>.pdf (name issu du JSON Shopify)
         raw_name = str(order.get("name") or payload.get("order_name") or payload.get("orderId") or "ORDER").strip()
@@ -408,18 +442,6 @@ def send_invoice_email(invoice_data):
 
         # Construire la facture via le template existant
         invoice = invoice_from_shopify_payload(payload if isinstance(payload.get("order"), dict) else {"order": order})
-        subject = f"Invoice {raw_name}"
-        body = "\n".join([
-            "Hello,",
-            "",
-            "Please find your invoice attached to this email.",
-            "",
-            f"Order: {raw_name}",
-            "",
-            "Thank you for your order.",
-            "Footbar",
-        ])
-
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             html_path = tmp_path / html_filename
@@ -455,34 +477,35 @@ def send_invoice_email(invoice_data):
             except Exception as pdf_err:
                 log(f"⚠️ Génération PDF impossible ({pdf_err!r}), fallback HTML")
 
-            file_bytes = attachment_path.read_bytes()
-            attachment_b64 = base64.b64encode(file_bytes).decode("ascii")
-
             # Archive Drive indépendante du succès d'envoi email
             try:
                 upload_invoice_to_drive(attachment_path, attachment_filename, attachment_mime)
             except Exception as drive_err:
                 log(f"⚠️ Upload Drive échoué pour {attachment_filename}: {drive_err}")
 
-            message = Mail(
-                from_email=(FROM_EMAIL, "Footbar"),
-                to_emails=to_email,
-                subject=subject,
-                plain_text_content=body,
+            endpoint = f"{CR7M_BASE_URL.rstrip('/')}/mautic/send-email/"
+            with attachment_path.open("rb") as attachment_file:
+                response = requests.post(
+                    endpoint,
+                    headers={
+                        "Authorization": f"Token {CR7M_API_TOKEN}",
+                    },
+                    data={
+                        "email_id": invoice_email_id,
+                        "email": to_email,
+                    },
+                    files={
+                        "attachment": (attachment_filename, attachment_file, attachment_mime),
+                    },
+                    timeout=30,
+                )
+            log(
+                f"📨 Facture envoyée à {to_email} "
+                f"(CR7M: {response.status_code}, template_id: {invoice_email_id}, langue: {language_code}, fichier: {attachment_filename})"
             )
-            attachment = Attachment(
-                FileContent(attachment_b64),
-                FileName(attachment_filename),
-                FileType(attachment_mime),
-                Disposition("attachment"),
-            )
-            message.attachment = attachment
-
-            sg = SendGridAPIClient(SENDGRID_API_KEY)
-            response = sg.send(message)
-            log(f"📨 Facture envoyée à {to_email} (SendGrid: {response.status_code}, fichier: {attachment_filename})")
-            if response.status_code != 202:
-                return False, "Echec d'envoi de l'email facture"
+            if response.status_code >= 400:
+                log(f"📨 Body CR7M facture: {response.text[:1000]}")
+                return False, "Echec d'envoi de l'email facture via CR7M"
 
             return True, None
     except Exception as e:
