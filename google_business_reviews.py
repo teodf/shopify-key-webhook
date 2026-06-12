@@ -231,12 +231,14 @@ def _fetch_locations_for_account(access_token, account_name):
 def _fetch_reviews(access_token, account_id, location_id):
     reviews = []
     page_token = None
-    max_reviews = max(1, int(_env("GOOGLE_BUSINESS_MAX_REVIEWS", "50")))
+    max_reviews_env = _env("GOOGLE_BUSINESS_MAX_REVIEWS")
+    max_reviews = max(1, int(max_reviews_env)) if max_reviews_env else None
     order_by = _env("GOOGLE_BUSINESS_REVIEWS_ORDER_BY", "updateTime desc")
     summary = {}
 
     while True:
-        params = {"pageSize": min(50, max_reviews)}
+        page_size = 50 if max_reviews is None else min(50, max_reviews - len(reviews))
+        params = {"pageSize": page_size}
         if order_by:
             params["orderBy"] = order_by
         if page_token:
@@ -251,10 +253,10 @@ def _fetch_reviews(access_token, account_id, location_id):
         reviews.extend(_normalize_review(review) for review in payload.get("reviews", []))
 
         page_token = payload.get("nextPageToken")
-        if not page_token or len(reviews) >= max_reviews:
+        if not page_token or (max_reviews is not None and len(reviews) >= max_reviews):
             return {
                 **summary,
-                "reviews": reviews[:max_reviews],
+                "reviews": reviews if max_reviews is None else reviews[:max_reviews],
             }
 
 
