@@ -42,9 +42,9 @@ def _reviews_output_path():
 
 def _max_reviews(provider_name):
     specific = _env(f"{provider_name}_MAX_REVIEWS")
-    generic = _env("APP_REVIEWS_MAX_REVIEWS", "50")
-    raw_value = (specific or generic or "").lower()
-    if raw_value in {"0", "all", "none", "unlimited"}:
+    generic = _env("APP_REVIEWS_MAX_REVIEWS")
+    raw_value = specific or generic
+    if not raw_value:
         return None
     return max(1, int(raw_value))
 
