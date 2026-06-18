@@ -339,7 +339,7 @@ def send_email_with_template(to_email, licence_key, language_code, template_fr_o
             },
             "tokens": {
                 "{licence_key}": licence_key,
-                "{licence_link}": f"https://footbar.app.link/activateKey?key={licence_key}",
+                "{licence_link}": f"https://link.footbar.com/activatekey?key={licence_key}",
             }
         }
         if order_id:
