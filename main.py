@@ -78,92 +78,62 @@ PRODUCT_CONFIG = {
     "FOOTBAR_GOLD_1_AN": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Feuille 1!A1:E",
-        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
-        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "FOOTBAR_GOLD_1_AN_BUNDLE": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Feuille 1!A1:E",
-        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
-        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Bundle!A1:E",
-        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
-        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Bundle à vie!A1:E",
-        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
-        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_10": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Bundle à vie!A1:E",
-        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
-        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_12": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Bundle à vie!A1:E",
-        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
-        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_14": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Bundle à vie!A1:E",
-        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
-        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_S": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Bundle à vie!A1:E",
-        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
-        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_M": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Bundle à vie!A1:E",
-        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
-        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_L": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Bundle à vie!A1:E",
-        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
-        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "B2C001_BUNDLE_LIFE_XL": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Bundle à vie!A1:E",
-        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
-        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "S302294": { # produit ajouté suite mauvaise config Quentin
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Bundle à vie!A1:E",
-        "template_fr": "d-da4295a9f558493a8b6988af60e501de",
-        "template_en": "d-0314abc9f83a4ab3bc9c3068b9b0e2a1",
     },
     "FOOTBAR_TEAM_1_MOIS": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Plateforme Coach 1 mois!A1:E",
-        "template_fr": "d-b3293a2f976b4821aa8bd9ad756cf372",
-        "template_en": "d-dcae1d5d0d9e419cbf485f65a483146c",
     },
     "FOOTBAR_TEAM_1_AN": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Plateforme Coach 1 an!A1:E",
-        "template_fr": "d-b3293a2f976b4821aa8bd9ad756cf372",
-        "template_en": "d-dcae1d5d0d9e419cbf485f65a483146c",
     },
     "FOOTBAR_TEAM_2_ANS": {
         "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
         "range_name": "Plateforme Coach 2 ans!A1:E",
-        "template_fr": "d-b3293a2f976b4821aa8bd9ad756cf372",
-        "template_en": "d-dcae1d5d0d9e419cbf485f65a483146c",
     },
 }
 
@@ -172,20 +142,20 @@ PRODUCT_REGEX_CONFIG = [
     (re.compile(r"^B2B(015|020|030)_1_MOIS$"), {
     "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
     "range_name": "Plateforme Coach 1 mois!A1:E",
-    "template_fr": "d-8727718ed5ea4273abd1ed1324d2e4f6",
-    "template_en": "d-97d04b88657d42859465132374a0fa2e",
+    "email_id_fr": "62",
+    "email_id_en": "60",
     }),
     (re.compile(r"^B2B(015|020|030)_1_AN$"), {
     "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
     "range_name": "Plateforme Coach 1 an!A1:E",
-    "template_fr": "d-8727718ed5ea4273abd1ed1324d2e4f6",
-    "template_en": "d-97d04b88657d42859465132374a0fa2e",
+    "email_id_fr": "62",
+    "email_id_en": "60",
     }),
     (re.compile(r"^B2B(015|020|030)_2_ANS$"), {
     "spreadsheet_id": "1x9vyp_TLr7NJSt6n-2qnXF43-MY1fG67ghu0B425or0",
     "range_name": "Plateforme Coach 2 ans!A1:E",
-    "template_fr": "d-8727718ed5ea4273abd1ed1324d2e4f6",
-    "template_en": "d-97d04b88657d42859465132374a0fa2e",
+    "email_id_fr": "62",
+    "email_id_en": "60",
     })
 ]
 
@@ -301,31 +271,22 @@ Footbar"""
 
 
 # 📩 Fonction d'envoi d'email
-def send_email_with_template(to_email, licence_key, language_code, template_fr_override=None, template_en_override=None, order_id=None, first_name="", last_name=""):
+def send_email_with_template(to_email, licence_key, language_code, email_id_fr=None, email_id_en=None, order_id=None, first_name="", last_name=""):
     try:
         log(f"📤 Envoi email à {to_email} avec clé {licence_key} en langue {language_code}")
 
-        # CR7M: email_id numérique unique; la langue est portée par contact.language.
-        candidate_template_ids = [
-            template_fr_override,
-            template_en_override,
-            CR7M_EMAIL_ID,
-        ]
-        template_id = None
-        for candidate in candidate_template_ids:
-            value = str(candidate or "").strip()
-            if value.isdigit():
-                template_id = int(value)
-                break
-        if template_id is None:
+        language = "fr" if language_code and language_code.lower().startswith("fr") else "en"
+        per_lang_id = email_id_fr if language == "fr" else email_id_en
+        candidate_id = str(per_lang_id or CR7M_EMAIL_ID or "").strip()
+        if not candidate_id.isdigit():
             log("❌ Aucun email_id CR7M numérique trouvé (config produit + CR7M_EMAIL_ID)")
             return False
+        template_id = int(candidate_id)
 
         if not CR7M_API_TOKEN:
             log("❌ CR7M_API_TOKEN manquant")
             return False
 
-        language = "fr" if language_code and language_code.lower().startswith("fr") else "en"
         contact_first_name = (first_name or "").strip()
         if not contact_first_name and to_email and "@" in to_email:
             contact_first_name = to_email.split("@", 1)[0][:80]
@@ -764,13 +725,12 @@ def process_order(customer_email, language_email, line_items, order_id=None):
             if not key:
                 return {"error": f"Aucune clé disponible pour {sku}"}, 500
 
-            # Envoi via CR7M (y compris pour Mirakl avec order_id)
             email_sent = send_email_with_template(
                 customer_email,
                 key,
                 language_email,
-                template_fr_override=config.get("template_fr"),
-                template_en_override=config.get("template_en"),
+                email_id_fr=config.get("email_id_fr"),
+                email_id_en=config.get("email_id_en"),
                 order_id=order_id,
             )
             if not email_sent:
