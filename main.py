@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from apscheduler.schedulers.background import BackgroundScheduler
 import logging
 import datetime
 import os
@@ -71,6 +72,11 @@ app.register_blueprint(google_business_reviews_bp)
 app.register_blueprint(store_reviews_bp)
 app.register_blueprint(decathlon_reviews_bp)
 app.register_blueprint(judgeme_reviews_bp)
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(lambda: poll_mirakl_and_notify(), "cron", minute="*/30")
+scheduler.add_job(lambda: poll_amazon_and_notify(), "cron", minute="*/30")
+scheduler.start()
 GOOGLE_DRIVE_INVOICE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_INVOICE_FOLDER_ID", "1bnXRpUh6Du2ofq_WNTEtWvrrIh1e-xQf")
 
 # Configuration par produit (routing via SKU)
