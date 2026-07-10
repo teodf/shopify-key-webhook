@@ -8,6 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     chromium-sandbox \
+    curl \
     fonts-dejavu-core \
     fonts-liberation \
     fonts-noto-color-emoji \
