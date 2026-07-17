@@ -296,6 +296,11 @@ def fetch_google_play_reviews():
 
 
 def _app_store_private_key():
+    key_b64 = _env("APP_STORE_CONNECT_PRIVATE_KEY_B64")
+    if key_b64:
+        import base64
+        return base64.b64decode(key_b64).decode()
+
     key = _env("APP_STORE_CONNECT_PRIVATE_KEY")
     if key:
         return key.replace("\\n", "\n")
