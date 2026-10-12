@@ -55,6 +55,8 @@ AMAZON_SP_API_SECRET_KEY = os.environ.get("AMAZON_SP_API_SECRET_KEY")
 AMAZON_SP_API_ENDPOINT = os.environ.get("AMAZON_SP_API_ENDPOINT", "https://sellingpartnerapi-eu.amazon.com")
 AMAZON_SP_API_REGION = os.environ.get("AMAZON_SP_API_REGION", "eu-west-1")
 AMAZON_STATE_FILE = os.environ.get("AMAZON_STATE_FILE", "amazon_state.json")
+# Nombre max de tentatives d'envoi (1 par cron de 30 min) avant d'abandonner une commande (48 = 24h)
+AMAZON_MAX_SEND_ATTEMPTS = int(os.environ.get("AMAZON_MAX_SEND_ATTEMPTS", "48"))
 # Marketplace IDs (peuvent être combinés avec des virgules)
 AMAZON_MARKETPLACE_IDS = os.environ.get(
     "AMAZON_MARKETPLACE_IDS",
@@ -792,6 +794,8 @@ def process_order_via_amazon_messaging(access_token, order_id, marketplace_id, l
 
     placeholder_email = f"amazon-{order_id}@messaging.footbar"
     keys_and_skus = []
+    reserved_pool = {}
+    reused_pools = set()
 
     for item in line_items:
         raw_sku = (item.get("sku") or "").strip().upper()
@@ -807,13 +811,24 @@ def process_order_via_amazon_messaging(access_token, order_id, marketplace_id, l
         config = find_product_config_for_sku(raw_sku)
         if not config:
             continue
-        for _ in range(qty):
-            key = get_and_use_license_key_gsheet(
-                placeholder_email,
-                config["spreadsheet_id"],
-                config["range_name"],
-                order_id=order_id,
+        pool_key = (config["spreadsheet_id"], config["range_name"])
+        if pool_key not in reserved_pool:
+            # Clés déjà réservées pour cette commande lors d'une tentative précédente (envoi échoué)
+            reserved_pool[pool_key] = find_reserved_keys_for_order(
+                config["spreadsheet_id"], config["range_name"], order_id
             )
+        for _ in range(qty):
+            if reserved_pool[pool_key]:
+                key = reserved_pool[pool_key].pop(0)
+                reused_pools.add(pool_key)
+                log(f"♻️ Amazon {order_id}: réutilisation de la clé déjà réservée (SKU {raw_sku})")
+            else:
+                key = get_and_use_license_key_gsheet(
+                    placeholder_email,
+                    config["spreadsheet_id"],
+                    config["range_name"],
+                    order_id=order_id,
+                )
             if not key:
                 return {"error": f"Aucune clé disponible pour {raw_sku}"}, 500
             keys_and_skus.append((key, raw_sku))
@@ -843,8 +858,20 @@ Regarding your Amazon order {order_id}, here are the codes for the service inclu
 Best regards, Footbar"""
 
     ok = send_amazon_buyer_message(access_token, order_id, marketplace_id, message_text)
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     if not ok:
-        return {"error": "Échec d'envoi du message au buyer (vérifier le rôle Buyer Communication)"}, 500
+        for sid, rng in reserved_pool:
+            set_send_status_for_order(
+                sid, rng, order_id,
+                f"ECHEC envoi message Amazon (dernier essai {now_iso})",
+            )
+        return {
+            "error": "Échec d'envoi du message au buyer (vérifier le rôle Buyer Communication)",
+            "keys_reserved": len(keys_and_skus),
+        }, 500
+    # Si des clés réutilisées avaient un statut d'échec, on le remplace par OK
+    for sid, rng in reused_pools:
+        set_send_status_for_order(sid, rng, order_id, f"OK envoyé après échec précédent ({now_iso})")
     return {
         "message": f"{len(keys_and_skus)} clé(s) envoyée(s) via Messaging API",
         "total_keys": len(keys_and_skus),
@@ -1210,7 +1237,15 @@ def poll_amazon_and_notify():
     else:
         # Première exécution : on prend les commandes des 7 derniers jours
         created_after = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
-    
+
+    # Commandes dont l'envoi a échoué : on remonte la fenêtre pour les réessayer
+    # (même si une commande plus récente a fait avancer last_seen_purchase_date).
+    failed_orders = dict(state.get("failed_orders", {}))
+    for info in failed_orders.values():
+        failed_dt = parse_iso8601(info.get("purchase_date"))
+        if failed_dt and failed_dt - datetime.timedelta(seconds=1) < created_after:
+            created_after = failed_dt - datetime.timedelta(seconds=1)
+
     try:
         orders = fetch_amazon_orders(access_token, created_after)
     except Exception as exc:
@@ -1302,10 +1337,32 @@ def poll_amazon_and_notify():
         if status == 200 and order_id and order_id not in processed_ids:
             processed_ids.add(order_id)
             processed_list.append(order_id)
+            failed_orders.pop(order_id, None)
         elif status != 200:
             log(f"⚠️ Amazon commande {order_id} (Messaging): {payload}")
+            if status >= 500 and order_id:
+                # Échec d'envoi : la clé reste réservée dans la sheet (réutilisée au prochain essai).
+                now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                info = failed_orders.get(order_id) or {"first_failed_at": now_iso}
+                info["attempts"] = info.get("attempts", 0) + 1
+                info["last_failed_at"] = now_iso
+                info["last_error"] = (payload or {}).get("error")
+                info["purchase_date"] = order.get("PurchaseDate")
+                if info["attempts"] >= AMAZON_MAX_SEND_ATTEMPTS:
+                    log(f"🛑 Amazon commande {order_id}: abandon après {info['attempts']} tentatives, "
+                        f"envoi manuel requis (clé conservée dans la sheet)")
+                    abandoned = dict(state.get("abandoned_orders", {}))
+                    abandoned[order_id] = info
+                    state["abandoned_orders"] = abandoned
+                    failed_orders.pop(order_id, None)
+                    if order_id not in processed_ids:
+                        processed_ids.add(order_id)
+                        processed_list.append(order_id)
+                else:
+                    failed_orders[order_id] = info
 
-    state["processed_order_ids"] = processed_list[-200:]  # Garder les 200 dernières
+    state["processed_order_ids"] = processed_list[-1000:]  # Garder les 1000 dernières
+    state["failed_orders"] = failed_orders
     if max_seen_dt:
         state["last_seen_purchase_date"] = max_seen_dt.isoformat()
     save_amazon_state(state)
@@ -1315,6 +1372,58 @@ def poll_amazon_and_notify():
         "message": f"{len([n for n in notifications if n['status'] == 200])} commande(s) Amazon notifiée(s)",
         "notifications": notifications,
     }, 200
+
+def find_reserved_keys_for_order(spreadsheet_id, range_name, order_id):
+    """Clés déjà réservées dans la sheet pour cette commande (évite d'en consommer de nouvelles à chaque retry)."""
+    if not order_id:
+        return []
+    values = read_keys(spreadsheet_id, range_name)
+    if not values:
+        return []
+    header = values[0]
+    if 'order_id' not in header:
+        return []
+    key_index = header.index('key')
+    used_index = header.index('used')
+    order_id_index = header.index('order_id')
+    keys = []
+    for row in values[1:]:
+        if len(row) <= max(key_index, used_index, order_id_index):
+            continue
+        if row[order_id_index] == order_id and row[used_index].lower() == 'true':
+            keys.append(row[key_index])
+    return keys
+
+SEND_STATUS_HEADER = "statut_envoi"
+SEND_STATUS_COLUMN = "F"
+
+def set_send_status_for_order(spreadsheet_id, range_name, order_id, status_text):
+    """Écrit un statut d'envoi (colonne F `statut_envoi`) sur les lignes réservées pour cette commande.
+    N'écrit que la colonne F (cellule par cellule), donc sans toucher à la plage A:E gérée ailleurs.
+    Ne lève jamais d'exception : un échec d'écriture du statut ne doit pas bloquer le traitement."""
+    try:
+        if not order_id:
+            return
+        title = range_name.split("!")[0].strip("'")
+        service = get_sheets_service()
+        values = service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id, range=f"'{title}'!A1:{SEND_STATUS_COLUMN}"
+        ).execute().get('values', [])
+        if not values or 'order_id' not in values[0]:
+            return
+        order_id_index = values[0].index('order_id')
+        data = [{"range": f"'{title}'!{SEND_STATUS_COLUMN}1", "values": [[SEND_STATUS_HEADER]]}]
+        for i, row in enumerate(values[1:], start=2):
+            if len(row) > order_id_index and row[order_id_index] == order_id:
+                data.append({"range": f"'{title}'!{SEND_STATUS_COLUMN}{i}", "values": [[status_text]]})
+        if len(data) == 1:
+            return
+        service.spreadsheets().values().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"valueInputOption": "RAW", "data": data},
+        ).execute()
+    except Exception as e:
+        log(f"⚠️ Impossible d'écrire {SEND_STATUS_HEADER} pour {order_id} ({range_name}): {e}")
 
 # 🔑 Fonction de récupération de clé
 def get_and_use_license_key_gsheet(to_email, spreadsheet_id, range_name, order_id=None):
