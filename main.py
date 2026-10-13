@@ -17,10 +17,6 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
 from invoice_template_en import invoice_from_shopify_payload, write_invoice_html, write_invoice_pdf
-from google_business_reviews import bp as google_business_reviews_bp, sync_google_business_reviews
-from store_reviews import bp as store_reviews_bp, sync_store_reviews
-from decathlon_reviews import bp as decathlon_reviews_bp
-from judgeme_reviews import bp as judgeme_reviews_bp
 
 # Permissions demandées : lecture + écriture sur Google Sheets + upload Google Drive
 SCOPES = [
@@ -70,16 +66,10 @@ def log(msg):
     print(f"[LOG] {msg}", flush=True)
 
 app = Flask(__name__)
-app.register_blueprint(google_business_reviews_bp)
-app.register_blueprint(store_reviews_bp)
-app.register_blueprint(decathlon_reviews_bp)
-app.register_blueprint(judgeme_reviews_bp)
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(lambda: poll_mirakl_and_notify(), "cron", minute="*/30")
 scheduler.add_job(lambda: poll_amazon_and_notify(), "cron", minute="*/30")
-scheduler.add_job(lambda: sync_google_business_reviews(), "cron", hour=7, minute=0)
-scheduler.add_job(lambda: sync_store_reviews(), "cron", hour=7, minute=0)
 scheduler.start()
 GOOGLE_DRIVE_INVOICE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_INVOICE_FOLDER_ID", "1bnXRpUh6Du2ofq_WNTEtWvrrIh1e-xQf")
 
